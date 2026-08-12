@@ -1,0 +1,50 @@
+[server]
+host = "127.0.0.1"
+port = 18789
+
+[database]
+path = "~/.clawrig/clawrig.db"
+
+[agents.defaults]
+model = "smart"
+
+[agents.agents]
+# Add custom agents here
+# name = "coding"
+# tools = ["shell", "filesystem"]
+
+[models.fast]
+provider = "groq"
+model = "llama-3.3-70b-versatile"
+temperature = 0.2
+
+[models.smart]
+provider = "openai"
+model = "gpt-4o-mini"
+temperature = 0.1
+
+[models.reasoning]
+provider = "openai"
+model = "o3-mini"
+temperature = 0.3
+
+[channels.telegram]
+enabled = false
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+dm_policy = "pairing"
+
+[channels.email]
+enabled = false
+imap_host = "imap.gmail.com"
+imap_port = 993
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+username_env = "EMAIL_USERNAME"
+password_env = "EMAIL_PASSWORD"
+
+[scheduler]
+enabled = true
+
+[heartbeat]
+enabled = true
+interval = "30m"

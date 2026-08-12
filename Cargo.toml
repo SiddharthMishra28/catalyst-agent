@@ -1,0 +1,48 @@
+[package]
+name = "clawrig"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny self-hosted personal AI Gateway with persistent memory, tools, and remote control"
+authors = ["ClawRig"]
+license = "MIT"
+
+[[bin]]
+name = "clawrig"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+thiserror = "2"
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+clap = { version = "4", features = ["derive"] }
+dashmap = "6"
+futures = "0.3"
+async-stream = "0.3"
+tokio-stream = "0.1"
+regex = "1"
+bytes = "1"
+mime_guess = "2"
+shellexpand = "3"
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+[dependencies.rig-core]
+version = "0.12"
+features = ["all"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
