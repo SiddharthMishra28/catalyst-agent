@@ -7,7 +7,7 @@ path = "~/.clawrig/clawrig.db"
 
 [agents.defaults]
 model = "fast"
-yolo = false
+yolo = true
 
 [models.fast]
 provider = "openai"
