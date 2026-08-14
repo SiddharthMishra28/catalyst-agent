@@ -78,7 +78,8 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks/{run_id}", get(get_task))
         .route("/api/tasks/{run_id}/cancel", post(cancel_task))
-        .route("/api/file", get(read_file).post(write_file))
+        .route("/api/file", get(read_file).post(write_file).delete(delete_file))
+        .route("/api/files", get(list_files))
         .with_state(state)
         .layer(cors)
 }
@@ -417,5 +418,101 @@ async fn write_file(
         "status": "ok",
         "path": req.path,
         "bytes": req.content.len(),
+    })))
+}
+
+/// Directories that are skipped (with all contents) when listing the
+/// workspace for the file explorer, so heavy build/dependency dirs never
+/// flood the tree.
+const SKIP_DIRS: &[&str] = &[
+    ".git", "node_modules", "target", ".cargo", ".cache", ".next", ".nuxt",
+    "dist", "build", "vendor", ".venv", "venv", "__pycache__", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", ".idea", ".vscode", "coverage", "tmp",
+];
+
+const MAX_TREE_DEPTH: usize = 8;
+
+/// Recursively collect files under `dir`, relative to `base`, honoring the
+/// skip list and depth cap. Kept synchronous — the workspace scan is bounded
+/// and this only runs on explicit user action.
+fn collect_files(base: &std::path::Path, dir: &std::path::Path, depth: usize, out: &mut Vec<serde_json::Value>) {
+    if depth > MAX_TREE_DEPTH {
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Ok(ft) = entry.file_type() else { continue };
+
+        if ft.is_dir() {
+            if SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            collect_files(base, &path, depth + 1, out);
+        } else if ft.is_file() {
+            let Ok(rel) = path.strip_prefix(base) else { continue };
+            let rel_str = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if rel_str.is_empty() {
+                continue;
+            }
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let mtime = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            out.push(serde_json::json!({
+                "path": rel_str,
+                "size": size,
+                "mtime": mtime,
+            }));
+        }
+    }
+}
+
+async fn list_files(
+    State(_state): State<WebState>,
+) -> Json<serde_json::Value> {
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(_) => return Json(serde_json::json!({ "root": "", "files": [] })),
+    };
+    let base = cwd.canonicalize().unwrap_or(cwd);
+
+    let mut files = Vec::new();
+    collect_files(&base, &base, 0, &mut files);
+    files.sort_by(|a, b| a["path"].as_str().unwrap_or("").cmp(b["path"].as_str().unwrap_or("")));
+
+    Json(serde_json::json!({
+        "root": base.display().to_string(),
+        "files": files,
+    }))
+}
+
+async fn delete_file(
+    State(_state): State<WebState>,
+    Query(req): Query<FileRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = resolve_workspace_path(&req.path)?;
+    if path.is_dir() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "path": req.path,
     })))
 }

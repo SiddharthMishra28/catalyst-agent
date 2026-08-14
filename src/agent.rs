@@ -305,11 +305,23 @@ impl AgentRuntime {
                     };
 
                     for tc in &tool_calls {
+                        // Extract the path argument so the editor UI can act on
+                        // file tools without re-parsing the raw argument JSON.
+                        let args_value: serde_json::Value =
+                            serde_json::from_str(tc.arguments.as_str().unwrap_or(""))
+                                .unwrap_or(serde_json::Value::Null);
+                        let tool_path = args_value
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
                         // Broadcast tool call event to web UI
                         let _ = self.event_tx.send(serde_json::to_string(&serde_json::json!({
                             "type": "tool_call",
                             "name": tc.name,
                             "args": tc.arguments.to_string(),
+                            "path": tool_path,
                             "run_id": request.run_id.as_deref().unwrap_or(""),
                             "session_id": session.id,
                         })).unwrap_or_default());
@@ -323,6 +335,7 @@ impl AgentRuntime {
                             )
                         };
 
+                        let mut result_ok = false;
                         let result_str = match permission {
                             PermissionMode::Allow | PermissionMode::Auto => {
                                 tracing::info!(
@@ -331,7 +344,10 @@ impl AgentRuntime {
                                     "Executing tool (allowed)"
                                 );
                                 match self.execute_tool(&tool_context, &tc.name, &tc.arguments.to_string()).await {
-                                    Ok(r) => r.content,
+                                    Ok(r) => {
+                                        result_ok = r.success;
+                                        r.content
+                                    }
                                     Err(e) => format!("Error: {}", e),
                                 }
                             }
@@ -372,7 +388,10 @@ impl AgentRuntime {
                                             "Approved - executing"
                                         );
                                         match self.execute_tool(&tool_context, &tc.name, &tc.arguments.to_string()).await {
-                                            Ok(r) => r.content,
+                                            Ok(r) => {
+                                                result_ok = r.success;
+                                                r.content
+                                            }
                                             Err(e) => format!("Error: {}", e),
                                         }
                                     }
@@ -403,6 +422,8 @@ impl AgentRuntime {
                             "type": "tool_result",
                             "name": tc.name,
                             "result": result_truncated,
+                            "ok": result_ok,
+                            "path": tool_path,
                             "run_id": request.run_id.as_deref().unwrap_or(""),
                             "session_id": session.id,
                         })).unwrap_or_default());
