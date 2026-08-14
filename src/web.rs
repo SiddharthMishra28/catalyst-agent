@@ -428,6 +428,8 @@ const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", ".cargo", ".cache", ".next", ".nuxt",
     "dist", "build", "vendor", ".venv", "venv", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".idea", ".vscode", "coverage", "tmp",
+    "bin", "boot", "dev", "etc", "home", "lib", "lib64", "opt", "proc",
+    "root", "run", "sbin", "srv", "sys", "usr", "var",
 ];
 
 const MAX_TREE_DEPTH: usize = 8;

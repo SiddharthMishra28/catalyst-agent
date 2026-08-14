@@ -13,4 +13,5 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 EXPOSE 8080
 ENV PORT=8080
+WORKDIR /workspace
 ENTRYPOINT ["/docker-entrypoint.sh"]
