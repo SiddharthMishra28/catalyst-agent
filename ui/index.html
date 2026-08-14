@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>ClawRig</title>
 <link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/theme/material-darker.min.css">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f172a;--surface:#1e293b;--surface2:#334155;--text:#f8fafc;--text2:#94a3b8;--accent:#38bdf8;--accent2:#818cf8;--green:#34d399;--red:#f87171;--radius:12px}
@@ -18,6 +20,8 @@ header .status{margin-left:auto;font-size:12px;color:var(--green);display:flex;a
 header .status::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .agent-select{background:var(--surface2);color:var(--text);border:1px solid var(--surface2);border-radius:8px;padding:6px 10px;font-size:13px;outline:none}
+#layout{flex:1;display:flex;flex-direction:column;min-height:0}
+#chat-col{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
 #messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}
 .msg{max-width:85%;padding:12px 16px;border-radius:var(--radius);font-size:14px;line-height:1.5;word-break:break-word;animation:fadeIn .2s ease}
 .msg.user{align-self:flex-end;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border-bottom-right-radius:4px}
@@ -45,7 +49,24 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 .approval-banner button{border:none;border-radius:8px;padding:8px 18px;font-size:14px;font-weight:600;cursor:pointer}
 .approval-banner .approve-btn{background:#22c55e;color:#fff}
 .approval-banner .deny-btn{background:#ef4444;color:#fff}
-@media(min-width:768px){#messages{padding:24px 32px}.msg{max-width:60%}}
+#editor-panel{display:flex;flex-direction:column;min-height:40dvh;height:40dvh;flex-shrink:0;background:var(--surface);border-top:1px solid var(--surface2)}
+#editor-toolbar{display:flex;gap:6px;padding:8px;align-items:center;border-bottom:1px solid var(--surface2);flex-wrap:wrap}
+#file-path{flex:1;min-width:140px;background:var(--surface2);color:var(--text);border:none;border-radius:8px;padding:8px 12px;font-size:13px;outline:none;font-family:monospace}
+#file-path::placeholder{color:var(--text2)}
+#editor-toolbar button{background:var(--surface2);color:var(--text);border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .1s}
+#editor-toolbar button:hover{opacity:.85}
+#editor-toolbar button:disabled{opacity:.4;cursor:not-allowed}
+#btn-save{background:linear-gradient(135deg,var(--green),#10b981);color:#fff}
+#file-status{padding:4px 10px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--surface2);background:rgba(0,0,0,.2)}
+#editor-host{flex:1;min-height:0;overflow:hidden}
+#editor-host .CodeMirror{height:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
+#file-toast{position:fixed;bottom:90px;right:16px;background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--text);display:none;z-index:20;max-width:320px;word-break:break-all;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+#file-toast button{margin-left:8px;background:var(--accent);color:#0f172a;border:none;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer}
+@media(min-width:900px){
+  #layout{flex-direction:row}
+  #editor-panel{height:auto;min-height:0;flex:1 1 45%;max-width:50%;border-left:1px solid var(--surface2);border-top:none}
+  #messages{padding:24px 32px}.msg{max-width:60%}
+}
 </style>
 </head>
 <body>
@@ -54,11 +75,26 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <select class="agent-select" id="agent-select"><option value="main">main</option></select>
 <div class="status" id="status">Connected</div>
 </header>
+<div id="layout">
+<div id="chat-col">
 <div id="messages"></div>
 <div id="input-bar">
 <textarea id="input" rows="1" placeholder="Message ClawRig..." autofocus></textarea>
 <button id="cancel" style="display:none;background:var(--red);color:#fff;border:none;border-radius:var(--radius);padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer">Cancel</button>
 <button id="send">Send</button>
+</div>
+</div>
+<div id="editor-panel">
+<div id="editor-toolbar">
+<input id="file-path" placeholder="path/to/file (workspace root)" spellcheck="false">
+<button id="btn-open" title="Open file">Open</button>
+<button id="btn-save" title="Save (Ctrl+S)" disabled>Save</button>
+<button id="btn-download" title="Download this file">Download</button>
+<button id="btn-zip" title="Download all agent-touched files as zip">Zip</button>
+</div>
+<div id="file-status">No file open</div>
+<div id="editor-host"><textarea id="editor" spellcheck="false"></textarea></div>
+</div>
 </div>
 <div class="metrics" id="metrics"></div>
 <div class="approval-banner" id="approval-banner">
@@ -67,6 +103,26 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <button class="deny-btn" id="approval-deny">Deny</button>
 <div class="tool-args" id="approval-args"></div>
 </div>
+<div id="file-toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/rust/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/shell/shell.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/toml/toml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/markdown/markdown.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/yaml/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/go/go.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/sql/sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/dockerfile/dockerfile.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/edit/closebrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/edit/matchbrackets.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/selection/active-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const messages=$('#messages'),input=$('#input'),sendBtn=$('#send'),cancelBtn=$('#cancel'),agentSelect=$('#agent-select'),statusEl=$('#status'),metricsEl=$('#metrics');
@@ -80,6 +136,168 @@ const approvalArgs=$('#approval-args');
 const approvalApprove=$('#approval-approve');
 const approvalDeny=$('#approval-deny');
 let currentApprovalId=null;
+
+const filePathInput=$('#file-path');
+const btnOpen=$('#btn-open');
+const btnSave=$('#btn-save');
+const btnDownload=$('#btn-download');
+const btnZip=$('#btn-zip');
+const fileStatus=$('#file-status');
+const fileToast=$('#file-toast');
+let currentFilePath=null;
+let dirty=false;
+let lastAgentPath=null;
+let agentSessionFiles=[];
+let toastTimer=null;
+
+const MIMES={
+  rs:'text/x-rustsrc',
+  js:'text/javascript',mjs:'text/javascript',cjs:'text/javascript',json:'application/json',
+  py:'text/x-python',
+  sh:'text/x-sh',bash:'text/x-sh',zsh:'text/x-sh',
+  toml:'text/x-toml',
+  xml:'text/xml',
+  html:'text/html',htm:'text/html',
+  css:'text/css',
+  md:'text/x-markdown',markdown:'text/x-markdown',
+  yaml:'text/x-yaml',yml:'text/x-yaml',
+  go:'text/x-go',
+  c:'text/x-csrc',h:'text/x-csrc',cpp:'text/x-csrc',hpp:'text/x-csrc',java:'text/x-java',cs:'text/x-csharp',
+  sql:'text/x-sql',
+  dockerfile:'text/x-dockerfile',
+  txt:null,log:null
+};
+function mimeForPath(p){
+  const lower=(p||'').toLowerCase();
+  if(lower.includes('dockerfile'))return 'text/x-dockerfile';
+  const ext=lower.split('.').pop();
+  return MIMES[ext]!==undefined?MIMES[ext]:null;
+}
+function baseName(p){return (p||'').split('/').pop()||'file';}
+
+const editor=CodeMirror.fromTextArea($('#editor'),{
+  lineNumbers:true,
+  mode:null,
+  theme:'material-darker',
+  autoCloseBrackets:true,
+  matchBrackets:true,
+  styleActiveLine:true,
+  indentUnit:2,
+  tabSize:2,
+  lineWrapping:false,
+  viewportMargin:Infinity
+});
+editor.on('change',()=>{if(!dirty){dirty=true;updateSaveBtn();}});
+
+function updateSaveBtn(){btnSave.disabled=!dirty;}
+function setFileStatus(s){fileStatus.textContent=s;}
+function parseArgs(a){
+  if(a===null||a===undefined)return {};
+  if(typeof a==='string'){try{return JSON.parse(a)||{}}catch(e){return {}}}
+  return (typeof a==='object')?a:{};
+}
+function showFileToast(msg,action,actionPath){
+  clearTimeout(toastTimer);
+  fileToast.innerHTML='';
+  fileToast.textContent=msg;
+  if(action&&actionPath){
+    const b=document.createElement('button');
+    b.textContent=action;
+    b.onclick=()=>{openFile(actionPath);hideFileToast();};
+    fileToast.appendChild(b);
+  }
+  fileToast.style.display='block';
+  toastTimer=setTimeout(hideFileToast,5000);
+}
+function hideFileToast(){fileToast.style.display='none';}
+
+async function openFile(path){
+  path=(path||filePathInput.value).trim();
+  if(!path)return;
+  if(dirty){
+    if(!confirm(`Discard unsaved changes in ${currentFilePath}?`))return;
+  }
+  const r=await fetch('/api/file?path='+encodeURIComponent(path));
+  if(!r.ok){appendMsg('error',`Failed to load ${path} (HTTP ${r.status})`);return;}
+  const d=await r.json();
+  currentFilePath=d.path||path;
+  editor.setValue(d.content||'');
+  editor.setOption('mode',mimeForPath(currentFilePath));
+  editor.refresh();
+  filePathInput.value=currentFilePath;
+  dirty=false;updateSaveBtn();
+  setFileStatus(`${currentFilePath} · ${d.size} bytes`);
+}
+
+async function saveFile(){
+  if(!currentFilePath)return;
+  const content=editor.getValue();
+  const r=await fetch('/api/file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:currentFilePath,content})});
+  if(!r.ok){appendMsg('error',`Save failed (HTTP ${r.status})`);return;}
+  dirty=false;updateSaveBtn();
+  setFileStatus(`${currentFilePath} · saved ${content.length} bytes`);
+  showFileToast(`💾 Saved ${currentFilePath}`);
+}
+
+async function downloadFile(){
+  if(!currentFilePath)return;
+  if(dirty)await saveFile();
+  const blob=new Blob([editor.getValue()],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=baseName(currentFilePath);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function downloadZip(){
+  if(typeof JSZip==='undefined'){appendMsg('error','JSZip not loaded (offline?)');return;}
+  const zip=new JSZip();
+  const names={};
+  const add=(p,content)=>{const n=baseName(p);if(names[n]){names[n]++;zip.file(n.replace(/(\.[^.]+)?$/,`-${names[n]}$1`),content);}else{names[n]=1;zip.file(n,content);}};
+  if(currentFilePath){
+    if(dirty)await saveFile();
+    add(currentFilePath,editor.getValue());
+  }
+  for(const p of agentSessionFiles){
+    if(p===currentFilePath)continue;
+    try{
+      const r=await fetch('/api/file?path='+encodeURIComponent(p));
+      if(r.ok){const d=await r.json();add(d.path||p,d.content||'');}
+    }catch(e){}
+  }
+  const blob=await zip.generateAsync({type:'blob'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='clawrig-code-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showFileToast('📦 Downloading zip');
+}
+
+async function refreshFromAgent(path){
+  if(dirty){
+    showFileToast('⚠️ Unsaved changes — agent changed '+path,'Open',path);
+    return;
+  }
+  const r=await fetch('/api/file?path='+encodeURIComponent(path));
+  if(!r.ok)return;
+  const d=await r.json();
+  const p=d.path||path;
+  if(p===currentFilePath){
+    editor.setValue(d.content||'');
+    dirty=false;updateSaveBtn();
+    setFileStatus(`${p} · reloaded ${d.size} bytes`);
+    showFileToast('↻ Agent updated '+p);
+  }else{
+    if(!agentSessionFiles.includes(p))agentSessionFiles.push(p);
+    if(currentFilePath===null&&editor.getValue()===''){
+      openFile(p);
+    }else{
+      showFileToast('🧑‍💻 Agent wrote '+p,'Open',p);
+    }
+  }
+}
 
 async function init(){
   try{
@@ -98,8 +316,20 @@ function connectSSE(){
   eventSource.onmessage=e=>{
     try{
       const d=JSON.parse(e.data);
-      if(d.type==='tool_call')appendMsg('tool',`🔧 ${d.name}(${d.args||''})`);
-      if(d.type==='tool_result')appendMsg('tool',`✅ ${d.name}: ${d.result||''}`);
+      if(d.type==='tool_call'){
+        appendMsg('tool',`🔧 ${d.name}(${d.args||''})`);
+        const a=parseArgs(d.args);
+        if(a&&a.path&&(d.name==='write_file'||d.name==='edit_file')){
+          lastAgentPath=a.path;
+        }
+      }
+      if(d.type==='tool_result'){
+        appendMsg('tool',`✅ ${d.name}: ${d.result||''}`);
+        if((d.name==='write_file'||d.name==='edit_file')&&lastAgentPath){
+          const p=lastAgentPath;lastAgentPath=null;
+          setTimeout(()=>refreshFromAgent(p),250);
+        }
+      }
       if(d.type==='session.token'){
         // Stream tokens into a live assistant bubble for this run
         if(d.run_id&&d.run_id!==streamRunId){
@@ -232,6 +462,17 @@ sendBtn.onclick=send;
 cancelBtn.onclick=cancelRun;
 input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}};
 input.oninput=()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';};
+btnOpen.onclick=()=>openFile();
+btnSave.onclick=saveFile;
+btnDownload.onclick=downloadFile;
+btnZip.onclick=downloadZip;
+filePathInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();openFile();}};
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){
+    e.preventDefault();
+    if(currentFilePath)saveFile();
+  }
+});
 init();
 </script>
 </body>

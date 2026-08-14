@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -51,6 +51,18 @@ pub struct ApprovalRequest {
     pub approval_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct FileRequest {
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct FileWriteRequest {
+    pub path: String,
+    pub content: String,
+    pub append: Option<bool>,
+}
+
 pub fn create_router(state: WebState) -> Router {
     let cors = tower_http::cors::CorsLayer::permissive();
 
@@ -66,6 +78,7 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks/{run_id}", get(get_task))
         .route("/api/tasks/{run_id}/cancel", post(cancel_task))
+        .route("/api/file", get(read_file).post(write_file))
         .with_state(state)
         .layer(cors)
 }
@@ -296,4 +309,113 @@ fn get_memory_usage() -> u64 {
         }
         0
     }
+}
+
+/// Resolve a user-supplied path against the workspace root (the process cwd).
+/// The web file editor is intentionally scoped to the workspace so that the
+/// browser UI cannot be used to read or write arbitrary server files.
+fn resolve_workspace_path(path_arg: &str) -> Result<std::path::PathBuf, StatusCode> {
+    let cwd = std::env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let base = cwd.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let raw = std::path::PathBuf::from(path_arg);
+    let candidate = if raw.is_absolute() {
+        raw.clone()
+    } else {
+        base.join(raw)
+    };
+
+    // Canonicalize the deepest existing ancestor of the candidate so we can
+    // verify containment even when the target file (or its parent dirs) does
+    // not exist yet (e.g. a brand-new file being written by the editor).
+    let mut probe = candidate.clone();
+    let mut suffix = Vec::new();
+    let canonical_ancestor = loop {
+        match probe.canonicalize() {
+            Ok(canon) => break canon,
+            Err(_) => match probe.file_name() {
+                Some(name) => {
+                    suffix.push(name.to_os_string());
+                    match probe.parent() {
+                        Some(parent) => probe = parent.to_path_buf(),
+                        None => return Err(StatusCode::FORBIDDEN),
+                    }
+                }
+                None => return Err(StatusCode::FORBIDDEN),
+            },
+        }
+    };
+
+    if !canonical_ancestor.starts_with(&base) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let mut resolved = canonical_ancestor;
+    for component in suffix.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+async fn read_file(
+    State(_state): State<WebState>,
+    Query(req): Query<FileRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = resolve_workspace_path(&req.path)?;
+    if !path.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let content = tokio::fs::read(&path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let text = String::from_utf8_lossy(&content);
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let rel = path
+        .strip_prefix(&cwd)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string());
+
+    Ok(Json(serde_json::json!({
+        "path": rel,
+        "name": path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        "content": text,
+        "size": content.len(),
+    })))
+}
+
+async fn write_file(
+    State(_state): State<WebState>,
+    Json(req): Json<FileWriteRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = resolve_workspace_path(&req.path)?;
+
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    if req.append.unwrap_or(false) {
+        let current = if path.exists() {
+            tokio::fs::read_to_string(&path).await.unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let combined = format!("{}{}", current, req.content);
+        tokio::fs::write(&path, combined)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    } else {
+        tokio::fs::write(&path, &req.content)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "path": req.path,
+        "bytes": req.content.len(),
+    })))
 }

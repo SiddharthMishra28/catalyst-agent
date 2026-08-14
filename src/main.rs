@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Serve { ui, yolo, .. } => {
+        Commands::Serve { ui, yolo, port } => {
             let mut config = config::Config::load(&cli.config)?;
             
             // Override yolo mode from CLI flag
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
                 cancel_tokens: Arc::new(dashmap::DashMap::new()),
             };
 
-            let port = config.server.port;
+            let port = port.unwrap_or(config.server.port);
             let addr = format!("0.0.0.0:{}", port);
 
             tracing::info!(port = port, ui = ui, "Starting web server");

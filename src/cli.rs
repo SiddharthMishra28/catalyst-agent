@@ -17,9 +17,9 @@ pub enum Commands {
     Start,
     /// Start web server with PWA UI
     Serve {
-        /// Port to listen on
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
+        /// Port to listen on (defaults to config server.port)
+        #[arg(short, long)]
+        port: Option<u16>,
         /// Enable PWA UI
         #[arg(long, default_value = "true")]
         ui: bool,
