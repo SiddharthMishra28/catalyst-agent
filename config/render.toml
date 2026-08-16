@@ -11,16 +11,16 @@ yolo = true
 
 [models.fast]
 provider = "openai"
-model = "openai/gpt-oss-120b"
-api_key_env = "GROQ_API_KEY"
-base_url = "https://api.groq.com/openai/v1"
+model = "deepseek-v4-flash-free"
+api_key_env = "OPENCODE_API_KEY"
+base_url = "https://opencode.ai/zen/v1"
 temperature = 0.2
 
 [models.smart]
 provider = "openai"
-model = "openai/gpt-oss-120b"
-api_key_env = "GROQ_API_KEY"
-base_url = "https://api.groq.com/openai/v1"
+model = "mimo-v2.5-free"
+api_key_env = "OPENCODE_API_KEY"
+base_url = "https://opencode.ai/zen/v1"
 temperature = 0.1
 
 [scheduler]
