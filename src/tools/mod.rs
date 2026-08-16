@@ -1,6 +1,8 @@
 pub mod code;
 pub mod filesystem;
+pub mod search;
 pub mod shell;
+pub mod todos;
 pub mod web;
 
 use anyhow::Result;
@@ -293,6 +295,126 @@ pub fn create_default_registry() -> ToolRegistry {
         allow_permission.clone(),
         Arc::new(web::WebFetchTool),
         "web",
+    );
+
+    registry.register(
+        ToolSchema {
+            name: "web_search".to_string(),
+            description: "Search the web with a text query (DuckDuckGo, no API key needed). Returns up to 20 result titles, URLs and snippets. Use this when you need current, external information the user did not provide. Follow up with web_fetch to read a full page.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default: 8, max: 20)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        allow_permission.clone(),
+        Arc::new(web::WebSearchTool),
+        "web",
+    );
+
+    // Search tools
+    registry.register(
+        ToolSchema {
+            name: "glob".to_string(),
+            description: "Find files by glob pattern, e.g. `**/*.rs` or `src/**` or `*.toml`. `*` matches within one path segment, `**` matches across directories, `?` matches a single char. Patterns without a `/` match against file names at any depth. Use before reading or editing to discover exact paths.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match files"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Root directory to search (defaults to current directory)"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results (default: 200)"
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        allow_permission.clone(),
+        Arc::new(search::GlobTool),
+        "search",
+    );
+
+    registry.register(
+        ToolSchema {
+            name: "grep".to_string(),
+            description: "Search file contents with a regex pattern. Returns `path:line: content` matches. Skips binary files and common dependency directories (.git, node_modules, target, etc.). Use include to limit by filename glob (e.g. `*.rs`). Use before editing to find the exact locations to change.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Root directory to search (defaults to current directory)"
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "Only search files matching this glob, e.g. `*.rs`"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum matches (default: 100)"
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        allow_permission.clone(),
+        Arc::new(search::GrepTool),
+        "search",
+    );
+
+    // Todo tool
+    registry.register(
+        ToolSchema {
+            name: "todo_list".to_string(),
+            description: "Manage a per-session todo list for multi-step tasks. Operations: add (with content), list, update (set status, e.g. in_progress/completed, by id), remove (by id), clear. Create a todo list whenever a task has several steps so the user can follow your plan and progress.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": ["list", "add", "update", "remove", "clear"],
+                        "description": "Operation to perform"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Todo item text (required for op=add)"
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Todo item id (required for op=update and op=remove)"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed"],
+                        "description": "New status for op=update"
+                    }
+                },
+                "required": ["op"]
+            }),
+        },
+        allow_permission.clone(),
+        Arc::new(todos::TodoListTool),
+        "todo",
     );
 
     // Coding tools
