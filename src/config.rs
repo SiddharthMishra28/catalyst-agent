@@ -90,6 +90,8 @@ pub struct ModelsConfig {
     pub smart: Option<ModelProfile>,
     #[serde(default)]
     pub reasoning: Option<ModelProfile>,
+    #[serde(default)]
+    pub groq: Option<ModelProfile>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

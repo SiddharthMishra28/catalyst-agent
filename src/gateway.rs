@@ -55,6 +55,9 @@ impl Gateway {
         if let Some(reasoning) = &config.models.reasoning {
             model_router.register_profile("reasoning".to_string(), reasoning.clone());
         }
+        if let Some(groq) = &config.models.groq {
+            model_router.register_profile("groq".to_string(), groq.clone());
+        }
 
         // Initialize tool registry with default tools
         let tools = Arc::new(create_default_registry());

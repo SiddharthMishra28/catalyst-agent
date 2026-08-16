@@ -88,6 +88,9 @@ async fn main() -> Result<()> {
             if let Some(reasoning) = &config.models.reasoning {
                 model_router.register_profile("reasoning".to_string(), reasoning.clone());
             }
+            if let Some(groq) = &config.models.groq {
+                model_router.register_profile("groq".to_string(), groq.clone());
+            }
 
             // Initialize LLM provider
             let default_model = config.models.fast.as_ref()
