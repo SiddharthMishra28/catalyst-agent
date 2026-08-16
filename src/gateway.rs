@@ -209,6 +209,7 @@ impl Gateway {
                 content: message.text.unwrap_or_default(),
                 attachments: message.attachments,
                 run_id: None,
+                model_profile: None,
                 cancel_token: None,
             };
 
@@ -259,6 +260,7 @@ impl Gateway {
             content: prompt.to_string(),
             attachments: Vec::new(),
             run_id: None,
+            model_profile: None,
             cancel_token: None,
         };
 

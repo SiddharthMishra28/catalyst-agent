@@ -23,6 +23,8 @@ pub struct AgentRequest {
     pub attachments: Vec<Attachment>,
     pub run_id: Option<String>,
     #[serde(skip)]
+    pub model_profile: Option<String>,
+    #[serde(skip)]
     pub cancel_token: Option<Arc<AtomicBool>>,
 }
 
@@ -105,8 +107,13 @@ impl AgentRuntime {
         };
         self.sessions.add_message(&user_msg).await?;
 
-        // Select model
-        let (_profile_name, profile) = self.model_router.select(&crate::models::TaskClass::Chat)?;
+        // Select model (explicit profile override from the caller wins; otherwise route by task class)
+        let (_profile_name, profile) = if let Some(name) = &request.model_profile {
+            let profile = self.model_router.select_by_name(name)?;
+            (name.clone(), profile)
+        } else {
+            self.model_router.select(&crate::models::TaskClass::Chat)?
+        };
 
         tracing::info!(
             agent = %request.agent_id,

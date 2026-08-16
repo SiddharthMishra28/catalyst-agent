@@ -53,6 +53,7 @@ header h1{
 header h1::after{content:'_';-webkit-text-fill-color:var(--accent);animation:blink 1.1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 header .status{margin-left:auto;font-size:12px;color:var(--green);display:flex;align-items:center;gap:6px;font-family:var(--mono);letter-spacing:.06em}
+.agent-select{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;outline:none;font-family:var(--mono);margin-left:12px}
 header .status::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
@@ -170,6 +171,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <body>
 <header>
 <h1>ClawRig</h1>
+<select class="agent-select" id="provider-select" title="Inference provider"><option value="opencode">opencode</option><option value="groq">groq</option></select>
 <div class="status" id="status">Connected</div>
 </header>
 <div id="layout">
@@ -231,7 +233,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-const messages=$('#messages'),input=$('#input'),sendBtn=$('#send'),cancelBtn=$('#cancel'),statusEl=$('#status'),metricsEl=$('#metrics');
+const messages=$('#messages'),input=$('#input'),sendBtn=$('#send'),cancelBtn=$('#cancel'),providerSelect=$('#provider-select'),statusEl=$('#status'),metricsEl=$('#metrics');
 let eventSource,agent='main',sending=false;
 let currentRunId=null;
 let streamBubble=null;
@@ -589,7 +591,7 @@ async function send(){
   const msg=input.value.trim();input.value='';input.style.height='auto';
   appendMsg('user',msg);showTyping();
   try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,agent,peer_id:'web-user'})});
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,agent,peer_id:'web-user',provider:providerSelect.value})});
     const d=await r.json();
     currentRunId=d.run_id||null;
     if(!d.run_id){

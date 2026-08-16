@@ -36,6 +36,7 @@ pub struct ChatRequest {
     pub message: String,
     pub agent: Option<String>,
     pub peer_id: Option<String>,
+    pub provider: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -129,6 +130,7 @@ async fn handle_chat(
         content: req.message,
         attachments: Vec::new(),
         run_id: Some(run_id.clone()),
+        model_profile: req.provider.map(|p| if p == "groq" { "groq".to_string() } else { "fast".to_string() }),
         cancel_token: Some(cancel_token),
     };
 

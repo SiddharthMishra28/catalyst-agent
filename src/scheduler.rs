@@ -66,6 +66,7 @@ impl Scheduler {
             content: job.prompt.clone(),
             attachments: Vec::new(),
             run_id: None,
+            model_profile: None,
             cancel_token: None,
         };
 
