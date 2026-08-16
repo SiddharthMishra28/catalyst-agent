@@ -185,6 +185,37 @@ impl LlmProvider {
 
         parse_sse_stream(response.bytes_stream(), emit).await
     }
+
+    /// Generate a completion using the endpoint/key of the given profile,
+    /// independent of the provider this instance was built from.
+    pub async fn complete_with_profile(
+        &self,
+        profile: &ModelProfile,
+        model: &str,
+        system_prompt: &str,
+        messages: Vec<ChatMessage>,
+        tools: &[ToolSchema],
+    ) -> Result<LlmResponse> {
+        let client = LlmProvider::from_config(profile)?;
+        client.complete(model, system_prompt, messages, tools).await
+    }
+
+    /// Stream a completion using the endpoint/key of the given profile.
+    pub async fn complete_streaming_with_profile<F>(
+        &self,
+        profile: &ModelProfile,
+        model: &str,
+        system_prompt: &str,
+        messages: Vec<ChatMessage>,
+        tools: &[ToolSchema],
+        emit: F,
+    ) -> Result<LlmResponse>
+    where
+        F: FnMut(String) + Send + 'static,
+    {
+        let client = LlmProvider::from_config(profile)?;
+        client.complete_streaming(model, system_prompt, messages, tools, emit).await
+    }
 }
 
 /// Build the OpenAI-compatible request body. Mirrors the wire format that has

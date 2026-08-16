@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::config::ModelProfile;
 use crate::database::sessions::{Message, SessionStore};
 use crate::llm::{LlmProvider, LlmResponse, ToolCallRequest, ChatMessage};
 use crate::models::ModelRouter;
@@ -180,7 +181,8 @@ impl AgentRuntime {
             let emit_tx = self.event_tx.clone();
             let emit_run_id = request.run_id.clone();
             let emit_session_id = session.id.clone();
-            let response = match self.llm_provider.complete_streaming(
+            let response = match self.llm_provider.complete_streaming_with_profile(
+                &profile,
                 &profile.model,
                 &system_prompt,
                 llm_messages,
@@ -474,7 +476,7 @@ impl AgentRuntime {
             if message_count > COMPACT_THRESHOLD {
                 let sessions = self.sessions.clone();
                 let llm_provider = self.llm_provider.clone();
-                let model = profile.model.clone();
+                let profile = profile.clone();
                 let session_id = session.id.clone();
                 let event_tx = self.event_tx.clone();
                 let run_id = request.run_id.clone();
@@ -482,7 +484,7 @@ impl AgentRuntime {
                     if let Err(e) = compact_session(
                         &sessions,
                         &llm_provider,
-                        &model,
+                        profile,
                         &session_id,
                         &event_tx,
                         run_id.as_deref(),
@@ -605,7 +607,7 @@ Use PowerShell syntax only if explicitly needed via `powershell -Command \"...\"
 async fn compact_session(
     sessions: &Arc<SessionStore>,
     llm_provider: &Arc<LlmProvider>,
-    model: &str,
+    profile: ModelProfile,
     session_id: &str,
     event_tx: &tokio::sync::broadcast::Sender<String>,
     run_id: Option<&str>,
@@ -645,8 +647,9 @@ async fn compact_session(
     );
 
     let summary = llm_provider
-        .complete(
-            model,
+        .complete_with_profile(
+            &profile,
+            &profile.model,
             "You are a conversation summarizer. Output only the summary.",
             vec![ChatMessage::User(summary_prompt)],
             &[],
