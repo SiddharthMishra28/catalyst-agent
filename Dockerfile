@@ -14,4 +14,9 @@ RUN chmod +x /docker-entrypoint.sh
 EXPOSE 8080
 ENV PORT=8080
 WORKDIR /workspace
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+COPY ui/ ui/
+COPY config/ config/
+COPY render.yaml Dockerfile docker-entrypoint.sh ./
 ENTRYPOINT ["/docker-entrypoint.sh"]
