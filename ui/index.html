@@ -101,10 +101,27 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 #btn-zip{background:linear-gradient(135deg,#7c3aed,#a78bfa);border-color:rgba(167,139,250,.5)!important;color:#fff}
 #editor-main{flex:1;display:flex;min-height:0}
 #explorer{width:240px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:rgba(4,7,15,.55)}
-#explorer-header{padding:7px 10px;font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--text2);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);flex-shrink:0;font-family:var(--mono)}
-#explorer-header::before{content:'▸';color:var(--accent);margin-right:4px}
-#explorer-refresh{background:none;border:none;color:var(--text2);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:6px;line-height:1}
+#explorer-tabs{display:flex;align-items:center;gap:4px;padding:5px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+.explorer-tab{background:none;border:none;color:var(--text2);cursor:pointer;font-size:11px;font-weight:700;letter-spacing:.12em;padding:3px 8px;border-radius:6px;font-family:var(--mono)}
+.explorer-tab:hover{color:var(--text)}
+.explorer-tab.active{background:var(--surface2);color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+#explorer-refresh{margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:6px;line-height:1}
 #explorer-refresh:hover{background:var(--surface2);color:var(--accent)}
+.tree-row.dir{color:var(--text)}
+.tree-row.dir::after{content:'';margin-left:auto;flex-shrink:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--text2);transition:transform .15s}
+.tree-row.dir.open::after{transform:rotate(180deg)}
+.pkg-head{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:13px;font-family:var(--mono);font-weight:600;cursor:pointer;color:var(--accent);border-bottom:1px solid var(--border);background:rgba(34,211,238,.04)}
+.pkg-head:hover{background:var(--surface2)}
+.pkg-meta{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:11px;color:var(--text2);font-family:var(--mono);flex-wrap:wrap;border-bottom:1px solid rgba(34,211,238,.08)}
+.pkg-badge{background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700}
+.pkg-manifest{color:var(--accent);cursor:pointer;text-decoration:underline dotted}
+.pkg-manifest:hover{color:var(--green)}
+.pkg-label{padding:6px 10px 2px;font-size:10px;font-weight:700;letter-spacing:.12em;color:var(--text2);font-family:var(--mono)}
+.pkg-deps{display:flex;flex-direction:column;padding:0 6px 8px;border-bottom:1px solid var(--border)}
+.dep-row{padding:2px 8px;font-size:12px;font-family:var(--mono);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
+.dep-row:hover{color:var(--text)}
+.dep-row .dep-name{color:var(--text)}
+.dep-row .dep-kind{color:var(--text2);opacity:.7;margin-left:6px;font-size:10px}
 #explorer-list{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:1px;min-height:0}
 #explorer-empty{padding:10px;font-size:12px;color:var(--text2);line-height:1.5}
 .tree-row{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:6px;font-size:12.5px;font-family:var(--mono);cursor:pointer;white-space:nowrap;color:var(--text2)}
@@ -193,7 +210,11 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 </div>
 <div id="editor-main">
 <div id="explorer">
-<div id="explorer-header">FILES<button id="explorer-refresh" title="Refresh file tree">↻</button></div>
+<div id="explorer-tabs">
+<button class="explorer-tab active" id="tab-files" title="Workspace files">FILES</button>
+<button class="explorer-tab" id="tab-packages" title="Project &amp; packages">PACKAGES</button>
+<button id="explorer-refresh" title="Refresh">↻</button>
+</div>
 <div id="explorer-list"></div>
 </div>
 <div id="editor-col">
@@ -258,6 +279,10 @@ let currentFilePath=null;
 let dirty=false;
 let touchedPaths=new Set();
 let treeFiles=[];
+let treeData=[];
+let expandedPaths=new Set();
+let packageData=[];
+let explorerTab='files';
 let treeTimer=null;
 let toastTimer=null;
 
@@ -401,44 +426,180 @@ function refreshTree(){
       const r=await fetch('/api/files');
       if(!r.ok)return;
       const d=await r.json();
+      treeData=d.tree||[];
       treeFiles=(d.files||[]).map(f=>f.path).filter(Boolean);
-      renderTree();
+      for(const p of touchedPaths)expandAncestors(p);
+      if(currentFilePath)expandAncestors(currentFilePath);
+      if(explorerTab==='files')renderTree();
     }catch(e){}
   },300);
+}
+
+function expandAncestors(path){
+  const parts=(path||'').split('/');
+  parts.pop();
+  let acc='';
+  for(const p of parts){
+    if(!p)continue;
+    acc=acc?acc+'/'+p:p;
+    expandedPaths.add(acc);
+  }
+}
+
+function toggleDir(path){
+  if(expandedPaths.has(path))expandedPaths.delete(path);
+  else expandedPaths.add(path);
+  renderTree();
 }
 
 function treeRowFor(path){
   return explorerList.querySelector(`.tree-row[data-path="${CSS.escape(path)}"]`);
 }
 
+function fileRow(node){
+  const row=document.createElement('div');
+  row.className='tree-row'+(touchedPaths.has(node.path)?' touched':'');
+  if(node.path===currentFilePath)row.classList.add('active');
+  row.dataset.path=node.path;
+  row.title=node.path;
+  const ico=document.createElement('span');
+  ico.className='t-ico';
+  ico.textContent='📄';
+  const name=document.createElement('span');
+  name.className='t-name';
+  name.textContent=node.name;
+  row.appendChild(ico);
+  row.appendChild(name);
+  row.onclick=()=>openFile(node.path);
+  return row;
+}
+
+function dirRow(node){
+  const open=expandedPaths.has(node.path);
+  const row=document.createElement('div');
+  row.className='tree-row dir'+(open?' open':'');
+  row.dataset.path=node.path;
+  row.title=node.path;
+  const ico=document.createElement('span');
+  ico.className='t-ico';
+  ico.textContent=open?'📂':'📁';
+  const name=document.createElement('span');
+  name.className='t-name';
+  name.textContent=node.name;
+  row.appendChild(ico);
+  row.appendChild(name);
+  row.onclick=()=>toggleDir(node.path);
+  return row;
+}
+
+function buildNode(parent,node,depth){
+  if(node.type==='dir'){
+    parent.appendChild(dirRow(node));
+    if(expandedPaths.has(node.path)){
+      for(const child of (node.children||[]))buildNode(parent,child,depth+1);
+    }
+  }else{
+    const row=fileRow(node);
+    row.style.paddingLeft=(8+depth*14)+'px';
+    parent.appendChild(row);
+  }
+}
+
 function renderTree(){
+  if(explorerTab!=='files')return;
   explorerList.innerHTML='';
-  if(treeFiles.length===0){
+  if(treeData.length===0){
     const empty=document.createElement('div');
     empty.id='explorer-empty';
     empty.textContent='No files yet — files the agent creates appear here.';
     explorerList.appendChild(empty);
     return;
   }
-  for(const path of treeFiles){
-    const depth=path.split('/').length-1;
-    const row=document.createElement('div');
-    row.className='tree-row'+(touchedPaths.has(path)?' touched':'');
-    if(path===currentFilePath)row.classList.add('active');
-    row.dataset.path=path;
-    row.title=path;
-    const ico=document.createElement('span');
-    ico.className='t-ico';
-    ico.textContent='📄';
-    const name=document.createElement('span');
-    name.className='t-name';
-    name.textContent=baseName(path);
-    row.style.paddingLeft=(8+depth*14)+'px';
-    row.appendChild(ico);
-    row.appendChild(name);
-    row.onclick=()=>openFile(path);
-    explorerList.appendChild(row);
+  const frag=document.createDocumentFragment();
+  for(const node of treeData)buildNode(frag,node,0);
+  explorerList.appendChild(frag);
+}
+
+function renderPackages(){
+  if(explorerTab!=='packages')return;
+  explorerList.innerHTML='';
+  if(packageData.length===0){
+    const empty=document.createElement('div');
+    empty.id='explorer-empty';
+    empty.textContent='No package manifests detected.';
+    explorerList.appendChild(empty);
+    return;
   }
+  for(const p of packageData){
+    const head=document.createElement('div');
+    head.className='pkg-head';
+    head.title='Open '+p.manifest;
+    head.textContent=(p.icon||'📦')+' '+p.name;
+    const manifestPath=(p.dir?p.dir+'/':'')+p.manifest;
+    head.onclick=()=>openFile(manifestPath);
+
+    const meta=document.createElement('div');
+    meta.className='pkg-meta';
+    const badge=document.createElement('span');
+    badge.className='pkg-badge';
+    badge.textContent=p.type_label||p.type;
+    meta.appendChild(badge);
+    if(p.version){const v=document.createElement('span');v.textContent='v'+p.version;meta.appendChild(v);}
+    if(p.dir){const d=document.createElement('span');d.textContent='↳ '+p.dir;meta.appendChild(d);}
+    const mf=document.createElement('span');
+    mf.className='pkg-manifest';
+    mf.textContent='📄 '+p.manifest;
+    mf.onclick=(e)=>{e.stopPropagation();openFile(manifestPath);};
+    meta.appendChild(mf);
+
+    const label=document.createElement('div');
+    label.className='pkg-label';
+    label.textContent='DEPENDENCIES'+(p.dependencies?` (${p.dependencies.length})`:'');
+    const deps=document.createElement('div');
+    deps.className='pkg-deps';
+    if(!p.dependencies||p.dependencies.length===0){
+      deps.textContent='No dependencies';
+      deps.style.padding='2px 10px 8px';
+      deps.style.color='var(--text2)';
+      deps.style.fontSize='12px';
+    }else{
+      for(const dep of p.dependencies){
+        const row=document.createElement('div');
+        row.className='dep-row';
+        const n=document.createElement('span');
+        n.className='dep-name';
+        n.textContent=dep.name;
+        row.appendChild(n);
+        if(dep.version){const v=document.createElement('span');v.className='dep-kind';v.textContent=dep.version;row.appendChild(v);}
+        if(dep.kind&&dep.kind!=='deps'&&dep.kind!=='dependencies'){const k=document.createElement('span');k.className='dep-kind';k.textContent='· '+dep.kind;row.appendChild(k);}
+        row.title=dep.name+(dep.version?'@'+dep.version:'');
+        deps.appendChild(row);
+      }
+    }
+
+    explorerList.appendChild(head);
+    explorerList.appendChild(meta);
+    explorerList.appendChild(label);
+    explorerList.appendChild(deps);
+  }
+}
+
+async function loadPackages(){
+  try{
+    const r=await fetch('/api/project');
+    if(!r.ok)return;
+    const d=await r.json();
+    packageData=d.projects||[];
+    if(explorerTab==='packages')renderPackages();
+  }catch(e){}
+}
+
+function showExplorerTab(tab){
+  explorerTab=tab;
+  $('#tab-files').classList.toggle('active',tab==='files');
+  $('#tab-packages').classList.toggle('active',tab==='packages');
+  if(tab==='packages')renderPackages();
+  else renderTree();
 }
 
 function pulseFile(path){
@@ -473,6 +634,7 @@ async function agentFileChanged(path){
 async function init(){
   connectSSE();
   refreshTree();
+  loadPackages();
   updateMetrics();
   setInterval(updateMetrics,30000);
 }
@@ -644,7 +806,9 @@ btnOpen.onclick=()=>openFile();
 btnSave.onclick=saveFile;
 btnDownload.onclick=downloadFile;
 btnZip.onclick=downloadZip;
-explorerRefresh.onclick=refreshTree;
+explorerRefresh.onclick=()=>{refreshTree();loadPackages();};
+$('#tab-files').onclick=()=>showExplorerTab('files');
+$('#tab-packages').onclick=()=>showExplorerTab('packages');
 filePathInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();openFile();}};
 document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){

@@ -81,6 +81,7 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/tasks/{run_id}/cancel", post(cancel_task))
         .route("/api/file", get(read_file).post(write_file).delete(delete_file))
         .route("/api/files", get(list_files))
+        .route("/api/project", get(project_info))
         .with_state(state)
         .layer(cors)
 }
@@ -441,39 +442,44 @@ const SKIP_DIRS: &[&str] = &[
 
 const MAX_TREE_DEPTH: usize = 8;
 
-/// Recursively collect files under `dir`, relative to `base`, honoring the
-/// skip list and depth cap. Kept synchronous — the workspace scan is bounded
-/// and this only runs on explicit user action.
-fn collect_files(base: &std::path::Path, dir: &std::path::Path, depth: usize, out: &mut Vec<serde_json::Value>) {
+/// Recursively collect a nested folder/file tree under `dir`, relative to
+/// `base`, honoring the skip list and depth cap. Kept synchronous — the
+/// workspace scan is bounded and this only runs on explicit user action.
+fn collect_tree(base: &std::path::Path, dir: &std::path::Path, depth: usize) -> Vec<serde_json::Value> {
     if depth > MAX_TREE_DEPTH {
-        return;
+        return Vec::new();
     }
     let mut entries: Vec<_> = match std::fs::read_dir(dir) {
         Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
-        Err(_) => return,
+        Err(_) => return Vec::new(),
     };
     entries.sort_by_key(|e| e.file_name());
 
+    let mut nodes = Vec::new();
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let Ok(ft) = entry.file_type() else { continue };
-
+        let Ok(rel) = path.strip_prefix(base) else { continue };
+        let rel_str = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if rel_str.is_empty() {
+            continue;
+        }
         if ft.is_dir() {
             if SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            collect_files(base, &path, depth + 1, out);
+            nodes.push(serde_json::json!({
+                "name": name,
+                "type": "dir",
+                "path": rel_str,
+                "children": collect_tree(base, &path, depth + 1),
+            }));
         } else if ft.is_file() {
-            let Ok(rel) = path.strip_prefix(base) else { continue };
-            let rel_str = rel
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            if rel_str.is_empty() {
-                continue;
-            }
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             let mtime = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
@@ -481,10 +487,30 @@ fn collect_files(base: &std::path::Path, dir: &std::path::Path, depth: usize, ou
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            out.push(serde_json::json!({
+            nodes.push(serde_json::json!({
+                "name": name,
+                "type": "file",
                 "path": rel_str,
                 "size": size,
                 "mtime": mtime,
+            }));
+        }
+    }
+    nodes
+}
+
+/// Flatten a nested tree back into the legacy flat file list.
+fn flatten_tree(nodes: &[serde_json::Value], out: &mut Vec<serde_json::Value>) {
+    for n in nodes {
+        if n["type"] == "dir" {
+            if let Some(children) = n["children"].as_array() {
+                flatten_tree(children, out);
+            }
+        } else {
+            out.push(serde_json::json!({
+                "path": n["path"],
+                "size": n["size"],
+                "mtime": n["mtime"],
             }));
         }
     }
@@ -495,18 +521,338 @@ async fn list_files(
 ) -> Json<serde_json::Value> {
     let cwd = match std::env::current_dir() {
         Ok(c) => c,
-        Err(_) => return Json(serde_json::json!({ "root": "", "files": [] })),
+        Err(_) => return Json(serde_json::json!({ "root": "", "tree": [], "files": [] })),
     };
     let base = cwd.canonicalize().unwrap_or(cwd);
 
+    let tree = collect_tree(&base, &base, 0);
     let mut files = Vec::new();
-    collect_files(&base, &base, 0, &mut files);
+    flatten_tree(&tree, &mut files);
     files.sort_by(|a, b| a["path"].as_str().unwrap_or("").cmp(b["path"].as_str().unwrap_or("")));
 
     Json(serde_json::json!({
         "root": base.display().to_string(),
+        "tree": tree,
         "files": files,
     }))
+}
+
+fn project_json(
+    p_type: &str,
+    label: &str,
+    icon: &str,
+    name: String,
+    version: String,
+    manifest: &str,
+    dir: &str,
+    deps: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": p_type,
+        "type_label": label,
+        "icon": icon,
+        "name": name,
+        "version": version,
+        "manifest": manifest,
+        "dir": dir,
+        "dependencies": deps,
+    })
+}
+
+/// Split a spec like `requests>=2.0,<3` or `torch[vision]~=2.1` into
+/// name + version.
+fn dep_from_spec(spec: &str, kind: &str) -> serde_json::Value {
+    let s = spec.trim();
+    let name = s
+        .split(|c: char| matches!(c, '<' | '>' | '=' | '~' | '!' | '[' | ';' | ' ' | '\t'))
+        .next()
+        .unwrap_or(s)
+        .trim();
+    let version = s.strip_prefix(name).unwrap_or("").trim_matches(|c: char| c == ' ' || c == ',' || c == ';' || c == '\t');
+    serde_json::json!({ "name": name.to_string(), "version": version.to_string(), "kind": kind })
+}
+
+fn sorted_deps(mut deps: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    deps.sort_by(|a, b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    deps
+}
+
+/// Detect the project manifest in `dir` and parse name/version/dependencies.
+/// Precedence: Cargo > npm > pyproject > requirements > go.mod > composer >
+/// Maven > Gradle > Gemfile > mix > pubspec > csproj.
+fn detect_project(dir: &std::path::Path, base: &std::path::Path) -> Option<serde_json::Value> {
+    let rel_str = dir
+        .strip_prefix(base)
+        .ok()
+        .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+        .unwrap_or_default();
+    let dir_name = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+
+    // Rust / Cargo
+    let cargo = dir.join("Cargo.toml");
+    if cargo.exists() {
+        if let Ok(text) = std::fs::read_to_string(&cargo) {
+            if let Ok(v) = text.parse::<toml::Value>() {
+                let pkg = v.get("package");
+                let name = pkg.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let version = pkg.and_then(|p| p.get("version")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let mut deps = Vec::new();
+                for (kind, key) in [("deps", "dependencies"), ("dev", "dev-dependencies"), ("build", "build-dependencies")] {
+                    if let Some(t) = v.get(key).and_then(|d| d.as_table()) {
+                        for (dn, spec) in t {
+                            let ver = match spec {
+                                toml::Value::String(s) => s.clone(),
+                                toml::Value::Table(tbl) => tbl.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                                _ => String::new(),
+                            };
+                            deps.push(serde_json::json!({ "name": dn, "version": ver, "kind": kind }));
+                        }
+                    }
+                }
+                return Some(project_json("rust", "Rust", "🦀", if name.is_empty() { dir_name } else { name }, version, "Cargo.toml", &rel_str, sorted_deps(deps)));
+            }
+        }
+    }
+
+    // Node.js / npm
+    let pkg_json = dir.join("package.json");
+    if pkg_json.exists() {
+        if let Ok(text) = std::fs::read_to_string(&pkg_json) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                let mut deps = Vec::new();
+                for (kind, key) in [("deps", "dependencies"), ("dev", "devDependencies")] {
+                    if let Some(t) = v.get(key).and_then(|d| d.as_object()) {
+                        for (dn, spec) in t {
+                            deps.push(serde_json::json!({ "name": dn, "version": spec.as_str().unwrap_or(""), "kind": kind }));
+                        }
+                    }
+                }
+                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let version = v.get("version").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                return Some(project_json("node", "Node.js", "⬢", if name.is_empty() { dir_name } else { name }, version, "package.json", &rel_str, sorted_deps(deps)));
+            }
+        }
+    }
+
+    // Python: pyproject.toml
+    let pyproject = dir.join("pyproject.toml");
+    if pyproject.exists() {
+        if let Ok(text) = std::fs::read_to_string(&pyproject) {
+            if let Ok(v) = text.parse::<toml::Value>() {
+                let proj = v.get("project");
+                let name = proj.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let version = proj.and_then(|p| p.get("version")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let mut deps = Vec::new();
+                if let Some(arr) = proj.and_then(|p| p.get("dependencies")).and_then(|d| d.as_array()) {
+                    for spec in arr {
+                        if let Some(s) = spec.as_str() {
+                            deps.push(dep_from_spec(s, "deps"));
+                        }
+                    }
+                }
+                if let Some(groups) = proj.and_then(|p| p.get("optional-dependencies")).and_then(|d| d.as_table()) {
+                    for (g, arr) in groups {
+                        if let Some(arr) = arr.as_array() {
+                            for spec in arr {
+                                if let Some(s) = spec.as_str() {
+                                    deps.push(dep_from_spec(s, g));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(pd) = v.get("tool").and_then(|t| t.get("poetry")).and_then(|p| p.get("dependencies")).and_then(|d| d.as_table()) {
+                    for (dn, spec) in pd {
+                        let ver = match spec {
+                            toml::Value::String(s) => s.clone(),
+                            toml::Value::Table(tbl) => tbl.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                            _ => String::new(),
+                        };
+                        deps.push(serde_json::json!({ "name": dn, "version": ver, "kind": "poetry" }));
+                    }
+                }
+                let name = if name.is_empty() { dir_name } else { name };
+                return Some(project_json("python", "Python", "🐍", name, version, "pyproject.toml", &rel_str, sorted_deps(deps)));
+            }
+        }
+    }
+
+    // Python: requirements.txt (fallback)
+    let req = dir.join("requirements.txt");
+    if req.exists() {
+        if let Ok(text) = std::fs::read_to_string(&req) {
+            let mut deps = Vec::new();
+            for line in text.lines() {
+                let l = line.trim();
+                if l.is_empty() || l.starts_with('#') || l.starts_with('-') || l.starts_with('.') {
+                    continue;
+                }
+                deps.push(dep_from_spec(l, "deps"));
+            }
+            return Some(project_json("python", "Python", "🐍", dir_name, String::new(), "requirements.txt", &rel_str, sorted_deps(deps)));
+        }
+    }
+
+    // Go
+    let go_mod = dir.join("go.mod");
+    if go_mod.exists() {
+        if let Ok(text) = std::fs::read_to_string(&go_mod) {
+            let mut module = String::new();
+            let mut gover = String::new();
+            let mut deps = Vec::new();
+            let mut in_block = false;
+            for line in text.lines() {
+                let l = line.trim();
+                if l.is_empty() || l.starts_with("//") {
+                    continue;
+                }
+                if let Some(rest) = l.strip_prefix("module ") {
+                    module = rest.trim().to_string();
+                } else if let Some(rest) = l.strip_prefix("go ") {
+                    gover = rest.trim().to_string();
+                } else if l == "require (" {
+                    in_block = true;
+                } else if l == ")" {
+                    in_block = false;
+                } else if in_block || l.starts_with("require ") {
+                    let spec = l.strip_prefix("require ").unwrap_or(l).trim();
+                    let parts: Vec<&str> = spec.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        deps.push(serde_json::json!({
+                            "name": parts[0],
+                            "version": parts[1].trim_matches('"'),
+                            "kind": "require",
+                        }));
+                    }
+                }
+            }
+            let name = module.rsplit('/').next().unwrap_or(&module).to_string();
+            return Some(project_json("go", "Go", "🐹", if name.is_empty() { dir_name } else { name }, gover, "go.mod", &rel_str, sorted_deps(deps)));
+        }
+    }
+
+    // PHP / Composer
+    let composer = dir.join("composer.json");
+    if composer.exists() {
+        if let Ok(text) = std::fs::read_to_string(&composer) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                let mut deps = Vec::new();
+                for (kind, key) in [("require", "require"), ("dev", "require-dev")] {
+                    if let Some(t) = v.get(key).and_then(|d| d.as_object()) {
+                        for (dn, spec) in t {
+                            deps.push(serde_json::json!({ "name": dn, "version": spec.as_str().unwrap_or(""), "kind": kind }));
+                        }
+                    }
+                }
+                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let version = v.get("version").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                return Some(project_json("php", "PHP", "🐘", if name.is_empty() { dir_name } else { name }, version, "composer.json", &rel_str, sorted_deps(deps)));
+            }
+        }
+    }
+
+    // Java / Maven
+    let pom = dir.join("pom.xml");
+    if pom.exists() {
+        if let Ok(text) = std::fs::read_to_string(&pom) {
+            let re = regex::Regex::new(r"(?s)<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*(?:<version>([^<]+)</version>)?").unwrap();
+            let re_art = regex::Regex::new(r"<artifactId>([^<]+)</artifactId>").unwrap();
+            let re_ver = regex::Regex::new(r"<version>([^<]+)</version>").unwrap();
+            let mut deps = Vec::new();
+            for caps in re.captures_iter(&text) {
+                deps.push(serde_json::json!({
+                    "name": caps.get(2).map(|m| m.as_str()).unwrap_or("").to_string(),
+                    "version": caps.get(3).map(|m| m.as_str()).unwrap_or("").to_string(),
+                    "kind": "deps",
+                }));
+            }
+            let name = re_art.captures(&text).map(|c| c[1].to_string()).unwrap_or_else(|| dir_name.clone());
+            let version = re_ver.captures(&text).map(|c| c[1].to_string()).unwrap_or_default();
+            return Some(project_json("java", "Java (Maven)", "☕", name, version, "pom.xml", &rel_str, sorted_deps(deps)));
+        }
+    }
+
+    // Java / Gradle
+    for g in ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"] {
+        if dir.join(g).exists() {
+            return Some(project_json("java", "Java (Gradle)", "☕", dir_name, String::new(), g, &rel_str, Vec::new()));
+        }
+    }
+
+    // Ruby / Gemfile
+    let gemfile = dir.join("Gemfile");
+    if gemfile.exists() {
+        if let Ok(text) = std::fs::read_to_string(&gemfile) {
+            let re = regex::Regex::new(r#"^\s*gem\s+['"]([^'"]+)['"]"#).unwrap();
+            let mut deps = Vec::new();
+            for caps in re.captures_iter(&text) {
+                deps.push(serde_json::json!({ "name": caps[1].to_string(), "version": String::new(), "kind": "gem" }));
+            }
+            return Some(project_json("ruby", "Ruby", "💎", dir_name, String::new(), "Gemfile", &rel_str, sorted_deps(deps)));
+        }
+    }
+
+    // Elixir / mix
+    if dir.join("mix.exs").exists() {
+        return Some(project_json("elixir", "Elixir", "💧", dir_name, String::new(), "mix.exs", &rel_str, Vec::new()));
+    }
+
+    // Dart / Flutter
+    let pubspec = dir.join("pubspec.yaml");
+    if pubspec.exists() {
+        if let Ok(text) = std::fs::read_to_string(&pubspec) {
+            let re = regex::Regex::new(r"(?m)^name:\s*([^\s#]+)").unwrap();
+            let name = re.captures(&text).map(|c| c[1].to_string()).unwrap_or_else(|| dir_name.clone());
+            return Some(project_json("dart", "Dart/Flutter", "🎯", name, String::new(), "pubspec.yaml", &rel_str, Vec::new()));
+        }
+    }
+
+    // .NET
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.filter_map(|e| e.ok()) {
+            if let Some(ext) = e.path().extension() {
+                if ext == "csproj" || ext == "fsproj" {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    return Some(project_json("dotnet", ".NET", "🔷", name.clone(), String::new(), &name, &rel_str, Vec::new()));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Report detected projects at the workspace root and its immediate
+/// subdirectories, with parsed dependencies per project type.
+async fn project_info(State(_state): State<WebState>) -> Json<serde_json::Value> {
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(_) => return Json(serde_json::json!({ "projects": [] })),
+    };
+    let base = cwd.canonicalize().unwrap_or(cwd);
+
+    let mut dirs = vec![base.clone()];
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let Ok(ft) = e.file_type() else { continue };
+            if !ft.is_dir() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if SKIP_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            dirs.push(e.path());
+        }
+    }
+
+    let mut projects = Vec::new();
+    for d in dirs {
+        if let Some(p) = detect_project(&d, &base) {
+            projects.push(p);
+        }
+    }
+    Json(serde_json::json!({ "projects": projects }))
 }
 
 async fn delete_file(
