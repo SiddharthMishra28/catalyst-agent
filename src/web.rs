@@ -37,6 +37,7 @@ pub struct ChatRequest {
     pub agent: Option<String>,
     pub peer_id: Option<String>,
     pub provider: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -116,7 +117,26 @@ async fn handle_chat(
     let run_id = uuid::Uuid::new_v4().to_string();
     let agent_owned = agent_name.to_string();
     let run_id_clone = run_id.clone();
-    let session_id = format!("web:{}:{}", agent_name, req.peer_id.as_deref().unwrap_or("anonymous"));
+
+    // Session identity: the caller can resume an earlier run by passing back
+    // the session id it received; otherwise every run gets its own fresh
+    // session key (and therefore its own scratch workspace).
+    let peer = req.peer_id.clone().unwrap_or_else(|| "anonymous".to_string());
+    let session_key = req
+        .session_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| format!("web:{}:{}", agent_name, uuid::Uuid::new_v4()));
+
+    let session = agent
+        .sessions
+        .get_or_create(agent_name, "web", &peer, Some(&session_key))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to resolve chat session");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let session_id = session.id.clone();
 
     // Register a cancel token for this run
     let cancel_token = Arc::new(AtomicBool::new(false));
@@ -139,9 +159,9 @@ async fn handle_chat(
 
     let request = AgentRequest {
         agent_id: agent_owned.clone(),
-        session_id: session_id.clone(),
+        session_id: session_key.clone(),
         channel: "web".to_string(),
-        peer_id: req.peer_id.unwrap_or_else(|| "anonymous".to_string()),
+        peer_id: peer,
         content: req.message,
         attachments: Vec::new(),
         run_id: Some(run_id.clone()),
@@ -188,7 +208,7 @@ async fn handle_chat(
     Ok(Json(ChatResponse {
         run_id,
         agent: agent_name.to_string(),
-        session_id,
+        session_id: session_key,
         status: "running".to_string(),
     }))
 }

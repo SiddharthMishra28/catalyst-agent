@@ -87,17 +87,27 @@ impl AgentRuntime {
     }
 
     pub async fn run(self: &Arc<Self>, request: AgentRequest) -> Result<AgentResponse> {
+        // Session identity: request.session_id doubles as the thread
+        // discriminator, so a stable session id resumes the same conversation
+        // (and its scratch workspace) while a fresh one starts a new session.
         let session = self.sessions.get_or_create(
             &request.agent_id,
             &request.channel,
             &request.peer_id,
-            None,
+            Some(&request.session_id),
         ).await?;
 
-        // Per-session scratch workspace: a temp folder keyed by the session id,
-        // so each conversation gets its own folder that the agent fills with
-        // generated code and the editor shows for download.
-        let workspace_dir = session_workspace_dir(&session.id);
+        // Per-session scratch workspace: a temp folder keyed by the session
+        // key (the stable resumable id the web UI passes back), so each
+        // conversation gets its own folder that the agent fills with generated
+        // code and the editor shows for download. Falls back to the row id
+        // when no session key was supplied.
+        let workspace_id = if request.session_id.trim().is_empty() {
+            session.id.clone()
+        } else {
+            request.session_id.clone()
+        };
+        let workspace_dir = session_workspace_dir(&workspace_id);
         let _ = tokio::fs::create_dir_all(&workspace_dir).await;
 
         // Store user message
