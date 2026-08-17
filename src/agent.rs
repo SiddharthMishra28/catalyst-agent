@@ -195,14 +195,23 @@ impl AgentRuntime {
                 &system_prompt,
                 llm_messages,
                 &tool_schemas,
-                move |token: String| {
+                move |token: crate::llm::StreamToken| {
                     if let Some(run_id) = &emit_run_id {
-                        let _ = emit_tx.send(serde_json::to_string(&serde_json::json!({
-                            "type": "session.token",
-                            "run_id": run_id,
-                            "session_id": emit_session_id,
-                            "token": token,
-                        })).unwrap_or_default());
+                        let event = match token {
+                            crate::llm::StreamToken::Content(tok) => serde_json::json!({
+                                "type": "session.token",
+                                "run_id": run_id,
+                                "session_id": emit_session_id,
+                                "token": tok,
+                            }),
+                            crate::llm::StreamToken::Reasoning(tok) => serde_json::json!({
+                                "type": "session.thinking",
+                                "run_id": run_id,
+                                "session_id": emit_session_id,
+                                "token": tok,
+                            }),
+                        };
+                        let _ = emit_tx.send(serde_json::to_string(&event).unwrap_or_default());
                     }
                 },
             ).await {

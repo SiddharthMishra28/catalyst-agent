@@ -204,7 +204,7 @@ impl LlmProvider {
         emit: F,
     ) -> Result<LlmResponse>
     where
-        F: FnMut(String) + Send + 'static,
+        F: FnMut(StreamToken) + Send + 'static,
     {
         acquire_inference_permit().await;
 
@@ -252,7 +252,7 @@ impl LlmProvider {
         emit: F,
     ) -> Result<LlmResponse>
     where
-        F: FnMut(String) + Send + 'static,
+        F: FnMut(StreamToken) + Send + 'static,
     {
         let client = LlmProvider::from_config(profile)?;
         client.complete_streaming(profile, system_prompt, messages, tools, emit).await
@@ -383,8 +383,19 @@ fn parse_choice(message: Option<&ChatMessageResponse>) -> Result<LlmResponse> {
     }
 }
 
-/// Streamed SSE delta. The `reasoning_content` field is deliberately ignored;
-/// the upstream flakily requires it to be echoed back, so callers retry instead.
+/// A streamed token from the model. Reasoning tokens (thinking) are kept
+/// separate from visible content so callers can surface them distinctly
+/// (e.g. a collapsible "Thinking" block in the web UI) without ever
+/// echoing them back to the upstream in a follow-up request.
+#[derive(Debug, Clone)]
+pub enum StreamToken {
+    Content(String),
+    Reasoning(String),
+}
+
+/// Streamed SSE delta. The `reasoning_content` field is deliberately not
+/// echoed back to the upstream (it flakily requires it), but is surfaced
+/// live to listeners via `StreamToken::Reasoning`.
 #[derive(Debug, Deserialize)]
 struct StreamChunk {
     choices: Vec<StreamChoice>,
@@ -399,6 +410,12 @@ struct StreamChoice {
 struct StreamDelta {
     #[serde(default)]
     content: Option<String>,
+    /// Used by NVIDIA NIM thinking models.
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    /// Used by some other OpenAI-compatible providers.
+    #[serde(default)]
+    reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Vec<StreamToolCall>,
 }
@@ -424,7 +441,7 @@ struct StreamFunction {
 async fn parse_sse_stream<S, F>(mut stream: S, mut emit: F) -> Result<LlmResponse>
 where
     S: futures::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin,
-    F: FnMut(String) + Send + 'static,
+    F: FnMut(StreamToken) + Send + 'static,
 {
     use futures::StreamExt;
 
@@ -465,8 +482,18 @@ where
             let delta = &choice.delta;
 
             if let Some(content) = &delta.content {
-                emit(content.clone());
+                emit(StreamToken::Content(content.clone()));
                 text_parts.push_str(content);
+            }
+
+            if let Some(reasoning) = delta
+                .reasoning_content
+                .as_ref()
+                .or(delta.reasoning.as_ref())
+            {
+                if !reasoning.is_empty() {
+                    emit(StreamToken::Reasoning(reasoning.clone()));
+                }
             }
 
             for tc in &delta.tool_calls {
