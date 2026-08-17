@@ -74,6 +74,45 @@ impl ModelRouter {
             .ok_or_else(|| anyhow::anyhow!("Model profile '{}' not found", name))
     }
 
+    /// Build an ordered chain of profiles for automatic failover: the caller's
+    /// preferred profile (or the task-class default) first, then the remaining
+    /// registered providers in priority order. NVIDIA is the default provider,
+    /// falling back to Groq and then opencode.
+    pub fn select_chain(
+        &self,
+        preferred: Option<&str>,
+        task_class: &TaskClass,
+    ) -> Vec<(String, ModelProfile)> {
+        const PRIORITY: [&str; 5] = ["nvidia", "groq", "fast", "smart", "reasoning"];
+
+        let class_default = match task_class {
+            TaskClass::Chat | TaskClass::Summarize | TaskClass::Extract => "nvidia",
+            TaskClass::Coding | TaskClass::Planning | TaskClass::Research | TaskClass::ToolUse => {
+                "smart"
+            }
+        };
+
+        let mut order: Vec<&str> = Vec::new();
+        let start = preferred.unwrap_or(class_default);
+        if !order.contains(&start) {
+            order.push(start);
+        }
+        for name in PRIORITY {
+            if !order.contains(&name) {
+                order.push(name);
+            }
+        }
+
+        order
+            .into_iter()
+            .filter_map(|name| {
+                self.profiles
+                    .get(name)
+                    .map(|entry| (name.to_string(), entry.value().clone()))
+            })
+            .collect()
+    }
+
     fn is_provider_healthy(&self, provider: &str) -> bool {
         match self.health.get(provider) {
             Some(health) => {

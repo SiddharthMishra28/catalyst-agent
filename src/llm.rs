@@ -1,8 +1,47 @@
+use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::config::ModelProfile;
 use crate::tools::ToolSchema;
+
+/// Global cap on inference requests: at most 30 requests per rolling 60s
+/// window across ALL providers (NVIDIA, Groq, opencode) to stay inside the
+/// strictest upstream rate limit.
+const MAX_INFERENCE_RPM: usize = 30;
+
+static INFERENCE_WINDOW: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
+
+/// Wait until an inference request slot is available, then consume one.
+async fn acquire_inference_permit() {
+    loop {
+        let queue = INFERENCE_WINDOW.get_or_init(|| Mutex::new(VecDeque::new()));
+        let now = Instant::now();
+        let (granted, wait) = {
+            let mut window = queue.lock().unwrap();
+            while window
+                .front()
+                .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(60))
+            {
+                window.pop_front();
+            }
+            if window.len() < MAX_INFERENCE_RPM {
+                window.push_back(now);
+                (true, Duration::ZERO)
+            } else {
+                let oldest = window.front().copied().unwrap_or(now);
+                (false, oldest + Duration::from_secs(60) - now)
+            }
+        };
+        if granted {
+            return;
+        }
+        tokio::time::sleep(wait).await;
+    }
+}
 
 /// Response from LLM - either text or tool calls
 #[derive(Debug, Clone)]
@@ -120,13 +159,15 @@ impl LlmProvider {
     /// Generate a completion with optional tool support.
     pub async fn complete(
         &self,
-        model: &str,
+        profile: &ModelProfile,
         system_prompt: &str,
         messages: Vec<ChatMessage>,
         tools: &[ToolSchema],
     ) -> Result<LlmResponse> {
+        acquire_inference_permit().await;
+
         let client = self.openai()?;
-        let body = build_request(model, system_prompt, &messages, tools, false);
+        let body = build_request(profile, system_prompt, &messages, tools, false);
 
         let response = client
             .http
@@ -156,7 +197,7 @@ impl LlmProvider {
     /// (including ids) and returned at the end.
     pub async fn complete_streaming<F>(
         &self,
-        model: &str,
+        profile: &ModelProfile,
         system_prompt: &str,
         messages: Vec<ChatMessage>,
         tools: &[ToolSchema],
@@ -165,8 +206,10 @@ impl LlmProvider {
     where
         F: FnMut(String) + Send + 'static,
     {
+        acquire_inference_permit().await;
+
         let client = self.openai()?;
-        let body = build_request(model, system_prompt, &messages, tools, true);
+        let body = build_request(profile, system_prompt, &messages, tools, true);
 
         let response = client
             .http
@@ -191,20 +234,18 @@ impl LlmProvider {
     pub async fn complete_with_profile(
         &self,
         profile: &ModelProfile,
-        model: &str,
         system_prompt: &str,
         messages: Vec<ChatMessage>,
         tools: &[ToolSchema],
     ) -> Result<LlmResponse> {
         let client = LlmProvider::from_config(profile)?;
-        client.complete(model, system_prompt, messages, tools).await
+        client.complete(profile, system_prompt, messages, tools).await
     }
 
     /// Stream a completion using the endpoint/key of the given profile.
     pub async fn complete_streaming_with_profile<F>(
         &self,
         profile: &ModelProfile,
-        model: &str,
         system_prompt: &str,
         messages: Vec<ChatMessage>,
         tools: &[ToolSchema],
@@ -214,15 +255,17 @@ impl LlmProvider {
         F: FnMut(String) + Send + 'static,
     {
         let client = LlmProvider::from_config(profile)?;
-        client.complete_streaming(model, system_prompt, messages, tools, emit).await
+        client.complete_streaming(profile, system_prompt, messages, tools, emit).await
     }
 }
 
 /// Build the OpenAI-compatible request body. Mirrors the wire format that has
 /// been verified against the OpenCode Zen API (system message, string contents,
 /// assistant tool_calls as {id, type, function{name, arguments-string}}).
+/// Temperature / max_tokens / top_p / extra_body from the profile are applied
+/// when present (e.g. NVIDIA NIM chat_template_kwargs + reasoning_budget).
 fn build_request(
-    model: &str,
+    profile: &ModelProfile,
     system_prompt: &str,
     messages: &[ChatMessage],
     tools: &[ToolSchema],
@@ -288,13 +331,32 @@ fn build_request(
         })
         .collect();
 
-    json!({
-        "model": model,
+    let mut body = json!({
+        "model": profile.model,
         "messages": wire_messages,
         "tools": tool_defs,
         "tool_choice": "auto",
         "stream": stream,
-    })
+    });
+
+    if let Some(temperature) = profile.temperature {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(max_tokens) = profile.max_tokens {
+        body["max_tokens"] = json!(max_tokens);
+    }
+    if let Some(top_p) = profile.top_p {
+        body["top_p"] = json!(top_p);
+    }
+    if let Some(extra) = &profile.extra_body {
+        if let Some(obj) = extra.as_object() {
+            for (key, value) in obj {
+                body[key] = value.clone();
+            }
+        }
+    }
+
+    body
 }
 
 /// Parse a non-streaming choice into an LlmResponse.

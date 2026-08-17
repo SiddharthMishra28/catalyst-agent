@@ -108,13 +108,16 @@ impl AgentRuntime {
         };
         self.sessions.add_message(&user_msg).await?;
 
-        // Select model (explicit profile override from the caller wins; otherwise route by task class)
-        let (_profile_name, profile) = if let Some(name) = &request.model_profile {
-            let profile = self.model_router.select_by_name(name)?;
-            (name.clone(), profile)
-        } else {
-            self.model_router.select(&crate::models::TaskClass::Chat)?
-        };
+        // Select the model chain: preferred profile (explicit caller override or
+        // provider dropdown) first, then automatic failover in priority order
+        // (NVIDIA -> Groq -> opencode) when a provider call fails.
+        let mut chain_iter = self
+            .model_router
+            .select_chain(request.model_profile.as_deref(), &crate::models::TaskClass::Chat)
+            .into_iter();
+        let (_, mut profile) = chain_iter
+            .next()
+            .context("No model profiles available")?;
 
         tracing::info!(
             agent = %request.agent_id,
@@ -183,7 +186,6 @@ impl AgentRuntime {
             let emit_session_id = session.id.clone();
             let response = match self.llm_provider.complete_streaming_with_profile(
                 &profile,
-                &profile.model,
                 &system_prompt,
                 llm_messages,
                 &tool_schemas,
@@ -198,7 +200,10 @@ impl AgentRuntime {
                     }
                 },
             ).await {
-                Ok(resp) => resp,
+                Ok(resp) => {
+                    self.model_router.report_success(&profile.provider);
+                    resp
+                },
                 Err(e) => {
                     // The free models intermittently reject requests when the
                     // upstream expects reasoning_content to be echoed back.
@@ -230,6 +235,23 @@ impl AgentRuntime {
                         error = %e,
                         "LLM completion failed"
                     );
+
+                    // Automatic failover: mark the failed provider and retry
+                    // the round with the next profile in the chain
+                    // (NVIDIA -> Groq -> opencode).
+                    self.model_router.report_failure(&profile.provider, 60);
+                    if let Some((_, next_profile)) = chain_iter.next() {
+                        profile = next_profile;
+                        tracing::warn!(
+                            agent = %request.agent_id,
+                            session = %session.id,
+                            provider = %profile.provider,
+                            model = %profile.model,
+                            "Failing over to next provider"
+                        );
+                        continue;
+                    }
+
                     final_response = Some(format!("I encountered an error processing your request: {}", e));
                     break;
                 }
@@ -649,7 +671,6 @@ async fn compact_session(
     let summary = llm_provider
         .complete_with_profile(
             &profile,
-            &profile.model,
             "You are a conversation summarizer. Output only the summary.",
             vec![ChatMessage::User(summary_prompt)],
             &[],

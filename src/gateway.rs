@@ -58,6 +58,9 @@ impl Gateway {
         if let Some(groq) = &config.models.groq {
             model_router.register_profile("groq".to_string(), groq.clone());
         }
+        if let Some(nvidia) = &config.models.nvidia {
+            model_router.register_profile("nvidia".to_string(), nvidia.clone());
+        }
 
         // Initialize tool registry with default tools
         let tools = Arc::new(create_default_registry());

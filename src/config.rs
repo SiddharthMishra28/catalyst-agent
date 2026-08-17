@@ -92,6 +92,8 @@ pub struct ModelsConfig {
     pub reasoning: Option<ModelProfile>,
     #[serde(default)]
     pub groq: Option<ModelProfile>,
+    #[serde(default)]
+    pub nvidia: Option<ModelProfile>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,6 +110,10 @@ pub struct ModelProfile {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

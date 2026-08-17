@@ -91,6 +91,9 @@ async fn main() -> Result<()> {
             if let Some(groq) = &config.models.groq {
                 model_router.register_profile("groq".to_string(), groq.clone());
             }
+            if let Some(nvidia) = &config.models.nvidia {
+                model_router.register_profile("nvidia".to_string(), nvidia.clone());
+            }
 
             // Initialize LLM provider
             let default_model = config.models.fast.as_ref()

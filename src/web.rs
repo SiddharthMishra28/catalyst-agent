@@ -130,7 +130,12 @@ async fn handle_chat(
         content: req.message,
         attachments: Vec::new(),
         run_id: Some(run_id.clone()),
-        model_profile: req.provider.map(|p| if p == "groq" { "groq".to_string() } else { "fast".to_string() }),
+        model_profile: req.provider.as_deref().and_then(|p| match p {
+            "nvidia" => Some("nvidia".to_string()),
+            "groq" => Some("groq".to_string()),
+            "opencode" => Some("fast".to_string()),
+            _ => None,
+        }),
         cancel_token: Some(cancel_token),
     };
 
