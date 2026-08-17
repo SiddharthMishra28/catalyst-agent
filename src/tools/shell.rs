@@ -48,7 +48,7 @@ fn is_powershell_syntax(command: &str) -> bool {
 
 #[async_trait]
 impl ToolHandler for ShellExecTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let command = input["command"]
             .as_str()
             .context("Missing 'command' parameter")?;
@@ -60,7 +60,8 @@ impl ToolHandler for ShellExecTool {
 
         let working_dir = input["working_dir"]
             .as_str()
-            .map(|s| std::path::PathBuf::from(s));
+            .map(|s| std::path::PathBuf::from(s))
+            .unwrap_or_else(|| ctx.workspace_dir.clone());
 
         // On Windows, route PowerShell syntax through a temp .ps1 file to avoid
         // cmd.exe nested-quoting issues (cmd /C mangles "powershell -Command \"...\"").
@@ -87,24 +88,18 @@ impl ToolHandler for ShellExecTool {
                     .arg("Bypass")
                     .arg("-File")
                     .arg(&ps_path);
-                if let Some(dir) = &working_dir {
-                    c.current_dir(dir);
-                }
+                c.current_dir(&working_dir);
                 c
             } else {
                 let mut c = std::process::Command::new("cmd");
                 c.arg("/C").arg(command);
-                if let Some(dir) = &working_dir {
-                    c.current_dir(dir);
-                }
+                c.current_dir(&working_dir);
                 c
             }
         } else {
             let mut c = std::process::Command::new("sh");
             c.arg("-c").arg(command);
-            if let Some(dir) = &working_dir {
-                c.current_dir(dir);
-            }
+            c.current_dir(&working_dir);
             c
         };
 

@@ -10,7 +10,7 @@ pub struct EditFileTool;
 
 #[async_trait::async_trait]
 impl ToolHandler for EditFileTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let path = input
             .get("path")
             .and_then(Value::as_str)
@@ -21,9 +21,11 @@ impl ToolHandler for EditFileTool {
             .context("Missing required parameter: new_string")?;
         let old_string = input.get("old_string").and_then(Value::as_str).unwrap_or("");
 
-        let content = tokio::fs::read_to_string(path)
+        let path = resolve_path(ctx, path);
+
+        let content = tokio::fs::read_to_string(&path)
             .await
-            .with_context(|| format!("Failed to read file: {}", path))?;
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         let (updated, changed) = if old_string.is_empty() {
             (format!("{}{}", content, new_string), true)
@@ -34,7 +36,7 @@ impl ToolHandler for EditFileTool {
                     success: false,
                     content: format!(
                         "old_string not found in {} ({} chars searched). Use read_file first to see exact contents.",
-                        path,
+                        path.display(),
                         content.chars().count()
                     ),
                     metadata: None,
@@ -46,7 +48,7 @@ impl ToolHandler for EditFileTool {
                     content: format!(
                         "old_string found {} times in {}. Include more surrounding context to make it unique.",
                         matches.len(),
-                        path
+                        path.display()
                     ),
                     metadata: None,
                 });
@@ -66,20 +68,20 @@ impl ToolHandler for EditFileTool {
             });
         }
 
-        tokio::fs::write(path, updated)
+        tokio::fs::write(&path, updated)
             .await
-            .with_context(|| format!("Failed to write file: {}", path))?;
+            .with_context(|| format!("Failed to write file: {}", path.display()))?;
 
         Ok(ToolResult {
             success: true,
             content: format!(
                 "Edited {}: replaced {} chars with {} chars ({} line total).",
-                path,
+                path.display(),
                 old_string.chars().count(),
                 new_string.chars().count(),
                 content.lines().count()
             ),
-            metadata: Some(serde_json::json!({ "path": path })),
+            metadata: Some(serde_json::json!({ "path": path.display().to_string() })),
         })
     }
 }
@@ -89,8 +91,8 @@ pub struct GitStatusTool;
 
 #[async_trait::async_trait]
 impl ToolHandler for GitStatusTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
-        let path = repo_dir(input.get("path").and_then(Value::as_str)).await?;
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+        let path = repo_dir(ctx, input.get("path").and_then(Value::as_str)).await?;
         let output = run_git(&path, &["status", "--short", "--branch"]).await?;
         Ok(ToolResult {
             success: true,
@@ -109,8 +111,8 @@ pub struct GitDiffTool;
 
 #[async_trait::async_trait]
 impl ToolHandler for GitDiffTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
-        let path = repo_dir(input.get("path").and_then(Value::as_str)).await?;
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+        let path = repo_dir(ctx, input.get("path").and_then(Value::as_str)).await?;
         let staged = input.get("staged").and_then(Value::as_bool).unwrap_or(false);
 
         let mut args = vec!["diff"];
@@ -151,8 +153,8 @@ pub struct GitCommitTool;
 
 #[async_trait::async_trait]
 impl ToolHandler for GitCommitTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
-        let path = repo_dir(input.get("path").and_then(Value::as_str)).await?;
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+        let path = repo_dir(ctx, input.get("path").and_then(Value::as_str)).await?;
         let message = input
             .get("message")
             .and_then(Value::as_str)
@@ -176,10 +178,21 @@ impl ToolHandler for GitCommitTool {
     }
 }
 
-/// Determine the git repository root: explicit path arg, or the agent's working directory.
-async fn repo_dir(path_arg: Option<&str>) -> Result<std::path::PathBuf> {
+/// Resolve the tool-supplied path into the session workspace when relative.
+fn resolve_path(ctx: &ToolContext, path_arg: &str) -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(path_arg);
+    if p.is_absolute() {
+        p
+    } else {
+        ctx.workspace_dir.join(p)
+    }
+}
+
+/// Determine the git repository root: explicit path arg (resolved into the
+/// session workspace when relative), or the session's workspace directory.
+async fn repo_dir(ctx: &ToolContext, path_arg: Option<&str>) -> Result<std::path::PathBuf> {
     if let Some(p) = path_arg {
-        let dir = std::path::PathBuf::from(p);
+        let dir = resolve_path(ctx, p);
         if dir.is_file() {
             return dir
                 .parent()
@@ -188,7 +201,7 @@ async fn repo_dir(path_arg: Option<&str>) -> Result<std::path::PathBuf> {
         }
         return Ok(dir);
     }
-    std::env::current_dir().context("Failed to resolve current directory")
+    Ok(ctx.workspace_dir.clone())
 }
 
 async fn run_git(dir: &std::path::Path, args: &[&str]) -> Result<String> {

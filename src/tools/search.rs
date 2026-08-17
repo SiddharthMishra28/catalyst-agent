@@ -89,13 +89,15 @@ pub struct GlobTool;
 
 #[async_trait]
 impl ToolHandler for GlobTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let pattern = input["pattern"]
             .as_str()
             .context("Missing 'pattern' parameter")?;
 
-        let root = input["path"].as_str().unwrap_or(".");
-        let root = PathBuf::from(root);
+        let root = match input["path"].as_str() {
+            Some(p) => PathBuf::from(p),
+            None => ctx.workspace_dir.clone(),
+        };
         if !root.exists() {
             return Ok(ToolResult {
                 success: false,
@@ -156,14 +158,16 @@ pub struct GrepTool;
 
 #[async_trait]
 impl ToolHandler for GrepTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let pattern = input["pattern"]
             .as_str()
             .context("Missing 'pattern' parameter")?;
         let regex = Regex::new(pattern).context("Invalid regex pattern")?;
 
-        let root = input["path"].as_str().unwrap_or(".");
-        let root = PathBuf::from(root);
+        let root = match input["path"].as_str() {
+            Some(p) => PathBuf::from(p),
+            None => ctx.workspace_dir.clone(),
+        };
         if !root.exists() {
             return Ok(ToolResult {
                 success: false,

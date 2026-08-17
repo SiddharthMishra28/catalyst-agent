@@ -16,6 +16,9 @@ pub struct ToolContext {
     pub session_id: String,
     pub channel: String,
     pub peer_id: String,
+    /// Scratch workspace for this session: the temp folder the agent's
+    /// generated code is written into. Relative paths resolve against it.
+    pub workspace_dir: std::path::PathBuf,
 }
 
 #[derive(Debug, Clone)]

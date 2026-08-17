@@ -1,25 +1,43 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
 use super::{ToolContext, ToolHandler, ToolResult};
+
+/// Resolve a tool-supplied path: relative paths land inside the session's
+/// workspace folder, absolute paths are honored as-is.
+fn resolve_path(ctx: &ToolContext, path_arg: &str) -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(path_arg);
+    if p.is_absolute() {
+        p
+    } else {
+        ctx.workspace_dir.join(p)
+    }
+}
+
+/// Path shown to the user/LLM: relative to the session workspace when inside it.
+fn display_path(ctx: &ToolContext, p: &std::path::Path) -> String {
+    p.strip_prefix(&ctx.workspace_dir)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
 
 /// Read file contents
 pub struct ReadFileTool;
 
 #[async_trait]
 impl ToolHandler for ReadFileTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let path = input["path"]
             .as_str()
             .context("Missing 'path' parameter")?;
 
-        let path = PathBuf::from(path);
+        let path = resolve_path(ctx, path);
         if !path.exists() {
             return Ok(ToolResult {
                 success: false,
-                content: format!("File not found: {}", path.display()),
+                content: format!("File not found: {}", display_path(ctx, &path)),
                 metadata: None,
             });
         }
@@ -33,7 +51,7 @@ impl ToolHandler for ReadFileTool {
             success: true,
             content,
             metadata: Some(json!({
-                "path": path.display().to_string(),
+                "path": display_path(ctx, &path),
                 "size": content_len,
             })),
         })
@@ -45,7 +63,7 @@ pub struct WriteFileTool;
 
 #[async_trait]
 impl ToolHandler for WriteFileTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let path = input["path"]
             .as_str()
             .context("Missing 'path' parameter")?;
@@ -54,7 +72,7 @@ impl ToolHandler for WriteFileTool {
             .as_str()
             .context("Missing 'content' parameter")?;
 
-        let path = PathBuf::from(path);
+        let path = resolve_path(ctx, path);
 
         // Create parent directories if they don't exist
         if let Some(parent) = path.parent() {
@@ -71,9 +89,9 @@ impl ToolHandler for WriteFileTool {
 
         Ok(ToolResult {
             success: true,
-            content: format!("File written: {}", path.display()),
+            content: format!("File written: {}", display_path(ctx, &path)),
             metadata: Some(json!({
-                "path": path.display().to_string(),
+                "path": display_path(ctx, &path),
                 "bytes_written": content.len(),
             })),
         })
@@ -85,12 +103,12 @@ pub struct ListDirTool;
 
 #[async_trait]
 impl ToolHandler for ListDirTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let path = input["path"]
             .as_str()
             .unwrap_or(".");
 
-        let path = PathBuf::from(path);
+        let path = resolve_path(ctx, path);
         if !path.exists() {
             return Ok(ToolResult {
                 success: false,
@@ -153,7 +171,7 @@ impl ToolHandler for ListDirTool {
                 listing
             },
             metadata: Some(json!({
-                "path": path.display().to_string(),
+                "path": display_path(ctx, &path),
                 "count": entries.len(),
             })),
         })
@@ -165,21 +183,22 @@ pub struct DeleteFileTool;
 
 #[async_trait]
 impl ToolHandler for DeleteFileTool {
-    async fn execute(&self, _ctx: &ToolContext, input: Value) -> Result<ToolResult> {
+    async fn execute(&self, ctx: &ToolContext, input: Value) -> Result<ToolResult> {
         let path = input["path"]
             .as_str()
             .context("Missing 'path' parameter")?;
 
-        let path = PathBuf::from(path);
+        let path = resolve_path(ctx, path);
         if !path.exists() {
             return Ok(ToolResult {
                 success: false,
-                content: format!("File not found: {}", path.display()),
+                content: format!("File not found: {}", display_path(ctx, &path)),
                 metadata: None,
             });
         }
 
-        if path.is_dir() {
+        let was_dir = path.is_dir();
+        if was_dir {
             tokio::fs::remove_dir_all(&path)
                 .await
                 .context(format!("Failed to delete directory: {}", path.display()))?;
@@ -191,10 +210,10 @@ impl ToolHandler for DeleteFileTool {
 
         Ok(ToolResult {
             success: true,
-            content: format!("Deleted: {}", path.display()),
+            content: format!("Deleted: {}", display_path(ctx, &path)),
             metadata: Some(json!({
-                "path": path.display().to_string(),
-                "was_dir": path.is_dir(),
+                "path": display_path(ctx, &path),
+                "was_dir": was_dir,
             })),
         })
     }

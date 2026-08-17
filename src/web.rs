@@ -55,6 +55,7 @@ pub struct ApprovalRequest {
 #[derive(Deserialize)]
 pub struct FileRequest {
     pub path: String,
+    pub session: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +63,18 @@ pub struct FileWriteRequest {
     pub path: String,
     pub content: String,
     pub append: Option<bool>,
+    pub session: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ListFilesRequest {
+    pub session: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SessionRequest {
+    pub agent: Option<String>,
+    pub peer: Option<String>,
 }
 
 pub fn create_router(state: WebState) -> Router {
@@ -82,6 +95,7 @@ pub fn create_router(state: WebState) -> Router {
         .route("/api/file", get(read_file).post(write_file).delete(delete_file))
         .route("/api/files", get(list_files))
         .route("/api/project", get(project_info))
+        .route("/api/session", get(session_info))
         .with_state(state)
         .layer(cors)
 }
@@ -320,12 +334,25 @@ fn get_memory_usage() -> u64 {
     }
 }
 
-/// Resolve a user-supplied path against the workspace root (the process cwd).
-/// The web file editor is intentionally scoped to the workspace so that the
-/// browser UI cannot be used to read or write arbitrary server files.
-fn resolve_workspace_path(path_arg: &str) -> Result<std::path::PathBuf, StatusCode> {
-    let cwd = std::env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base = cwd.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+/// Session-scoped workspace root: the temp folder the agent writes generated
+/// code into for the given session. Missing session falls back to "default".
+async fn workspace_root(session: Option<&str>) -> Result<std::path::PathBuf, StatusCode> {
+    let id = session.filter(|s| !s.is_empty()).unwrap_or("default");
+    let dir = crate::agent::session_workspace_dir(id);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(dir)
+}
+
+/// Resolve a user-supplied path against a workspace root (a session temp
+/// folder). The web file editor is intentionally scoped to that workspace so
+/// the browser UI cannot be used to read or write arbitrary server files.
+fn resolve_workspace_path(
+    base: &std::path::Path,
+    path_arg: &str,
+) -> Result<std::path::PathBuf, StatusCode> {
+    let base = base.canonicalize().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let raw = std::path::PathBuf::from(path_arg);
     let candidate = if raw.is_absolute() {
@@ -370,7 +397,8 @@ async fn read_file(
     State(_state): State<WebState>,
     Query(req): Query<FileRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = resolve_workspace_path(&req.path)?;
+    let base = workspace_root(req.session.as_deref()).await?;
+    let path = resolve_workspace_path(&base, &req.path)?;
     if !path.is_file() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -380,9 +408,8 @@ async fn read_file(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let text = String::from_utf8_lossy(&content);
 
-    let cwd = std::env::current_dir().unwrap_or_default();
     let rel = path
-        .strip_prefix(&cwd)
+        .strip_prefix(&base)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| path.display().to_string());
 
@@ -398,7 +425,8 @@ async fn write_file(
     State(_state): State<WebState>,
     Json(req): Json<FileWriteRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = resolve_workspace_path(&req.path)?;
+    let base = workspace_root(req.session.as_deref()).await?;
+    let path = resolve_workspace_path(&base, &req.path)?;
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -518,12 +546,13 @@ fn flatten_tree(nodes: &[serde_json::Value], out: &mut Vec<serde_json::Value>) {
 
 async fn list_files(
     State(_state): State<WebState>,
+    Query(req): Query<ListFilesRequest>,
 ) -> Json<serde_json::Value> {
-    let cwd = match std::env::current_dir() {
-        Ok(c) => c,
+    let base = match workspace_root(req.session.as_deref()).await {
+        Ok(b) => b,
         Err(_) => return Json(serde_json::json!({ "root": "", "tree": [], "files": [] })),
     };
-    let base = cwd.canonicalize().unwrap_or(cwd);
+    let base = base.canonicalize().unwrap_or(base);
 
     let tree = collect_tree(&base, &base, 0);
     let mut files = Vec::new();
@@ -824,12 +853,15 @@ fn detect_project(dir: &std::path::Path, base: &std::path::Path) -> Option<serde
 
 /// Report detected projects at the workspace root and its immediate
 /// subdirectories, with parsed dependencies per project type.
-async fn project_info(State(_state): State<WebState>) -> Json<serde_json::Value> {
-    let cwd = match std::env::current_dir() {
-        Ok(c) => c,
+async fn project_info(
+    State(_state): State<WebState>,
+    Query(req): Query<ListFilesRequest>,
+) -> Json<serde_json::Value> {
+    let base = match workspace_root(req.session.as_deref()).await {
+        Ok(b) => b,
         Err(_) => return Json(serde_json::json!({ "projects": [] })),
     };
-    let base = cwd.canonicalize().unwrap_or(cwd);
+    let base = base.canonicalize().unwrap_or(base);
 
     let mut dirs = vec![base.clone()];
     if let Ok(rd) = std::fs::read_dir(&base) {
@@ -855,11 +887,46 @@ async fn project_info(State(_state): State<WebState>) -> Json<serde_json::Value>
     Json(serde_json::json!({ "projects": projects }))
 }
 
+/// Resolve the session workspace for the web editor: creates (or reuses) the
+/// same session the agent runtime uses for this peer, so the browser sees the
+/// temp folder the agent writes generated code into.
+async fn session_info(
+    State(state): State<WebState>,
+    Query(req): Query<SessionRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let agent_name = req.agent.as_deref().unwrap_or("main");
+    let peer = req.peer.unwrap_or_else(|| "web-user".to_string());
+
+    let agent = state
+        .agent_manager
+        .get(agent_name)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let session = agent
+        .sessions
+        .get_or_create(agent_name, "web", &peer, None)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let workspace = crate::agent::session_workspace_dir(&session.id);
+    tokio::fs::create_dir_all(&workspace)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({
+        "agent": agent_name,
+        "peer": peer,
+        "session_id": session.id,
+        "workspace": workspace.display().to_string(),
+    })))
+}
+
 async fn delete_file(
     State(_state): State<WebState>,
     Query(req): Query<FileRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let path = resolve_workspace_path(&req.path)?;
+    let base = workspace_root(req.session.as_deref()).await?;
+    let path = resolve_workspace_path(&base, &req.path)?;
     if path.is_dir() {
         return Err(StatusCode::BAD_REQUEST);
     }

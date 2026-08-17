@@ -256,6 +256,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 const $=s=>document.querySelector(s);
 const messages=$('#messages'),input=$('#input'),sendBtn=$('#send'),cancelBtn=$('#cancel'),providerSelect=$('#provider-select'),statusEl=$('#status'),metricsEl=$('#metrics');
 let eventSource,agent='main',sending=false;
+let sessionId=null;
 let currentRunId=null;
 let streamBubble=null;
 let streamRunId=null;
@@ -348,7 +349,7 @@ function showFileToast(msg,action,actionPath){
 function hideFileToast(){fileToast.style.display='none';}
 
 async function loadIntoEditor(path,silent){
-  const r=await fetch('/api/file?path='+encodeURIComponent(path));
+  const r=await fetch('/api/file?'+sessQ()+'path='+encodeURIComponent(path));
   if(!r.ok){if(!silent)appendMsg('error',`Failed to load ${path} (HTTP ${r.status})`);return false;}
   const d=await r.json();
   currentFilePath=d.path||path;
@@ -374,7 +375,7 @@ async function openFile(path){
 async function saveFile(){
   if(!currentFilePath)return;
   const content=editor.getValue();
-  const r=await fetch('/api/file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:currentFilePath,content})});
+  const r=await fetch('/api/file',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:currentFilePath,content,session:sessionId})});
   if(!r.ok){appendMsg('error',`Save failed (HTTP ${r.status})`);return;}
   dirty=false;updateSaveBtn();
   setFileStatus(`${currentFilePath} · saved ${content.length} bytes`);
@@ -406,7 +407,7 @@ async function downloadZip(){
   for(const p of touchedPaths){
     if(p===currentFilePath)continue;
     try{
-      const r=await fetch('/api/file?path='+encodeURIComponent(p));
+      const r=await fetch('/api/file?'+sessQ()+'path='+encodeURIComponent(p));
       if(r.ok){const d=await r.json();add(d.path||p,d.content||'');}
     }catch(e){}
   }
@@ -423,7 +424,7 @@ function refreshTree(){
   clearTimeout(treeTimer);
   treeTimer=setTimeout(async()=>{
     try{
-      const r=await fetch('/api/files');
+      const r=await fetch('/api/files?'+sessQ());
       if(!r.ok)return;
       const d=await r.json();
       treeData=d.tree||[];
@@ -586,7 +587,7 @@ function renderPackages(){
 
 async function loadPackages(){
   try{
-    const r=await fetch('/api/project');
+    const r=await fetch('/api/project?'+sessQ());
     if(!r.ok)return;
     const d=await r.json();
     packageData=d.projects||[];
@@ -633,10 +634,28 @@ async function agentFileChanged(path){
 
 async function init(){
   connectSSE();
+  await syncSession();
   refreshTree();
   loadPackages();
   updateMetrics();
   setInterval(updateMetrics,30000);
+}
+
+// Resolve the session workspace this browser tab is bound to: the temp folder
+// the agent writes generated code into for this peer.
+async function syncSession(){
+  try{
+    const r=await fetch('/api/session?peer='+encodeURIComponent('web-user'));
+    if(!r.ok)return;
+    const d=await r.json();
+    sessionId=d.session_id||null;
+  }catch(e){
+    sessionId=null;
+  }
+}
+
+function sessQ(){
+  return sessionId?('session='+encodeURIComponent(sessionId)+'&'):'';
 }
 
 function connectSSE(){

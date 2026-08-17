@@ -94,6 +94,12 @@ impl AgentRuntime {
             None,
         ).await?;
 
+        // Per-session scratch workspace: a temp folder keyed by the session id,
+        // so each conversation gets its own folder that the agent fills with
+        // generated code and the editor shows for download.
+        let workspace_dir = session_workspace_dir(&session.id);
+        let _ = tokio::fs::create_dir_all(&workspace_dir).await;
+
         // Store user message
         let user_msg = Message {
             id: uuid::Uuid::new_v4().to_string(),
@@ -333,6 +339,7 @@ impl AgentRuntime {
                         session_id: session.id.clone(),
                         channel: request.channel.clone(),
                         peer_id: request.peer_id.clone(),
+                        workspace_dir: workspace_dir.clone(),
                     };
 
                     for tc in &tool_calls {
@@ -728,4 +735,21 @@ fn is_canned_greeting(text: &str) -> bool {
     ]
     .iter()
     .any(|pattern| lower.contains(pattern))
+}
+
+/// Per-session scratch workspace root: a temp folder keyed by the session id,
+/// so each conversation gets its own folder that the agent fills with
+/// generated code and the editor shows for download.
+pub fn session_workspace_dir(session_id: &str) -> std::path::PathBuf {
+    let safe: String = session_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    std::env::temp_dir().join("clawrig-sessions").join(safe)
 }
