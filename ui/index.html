@@ -69,6 +69,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 .tool-line .t-status{flex-shrink:0;font-weight:700}
 .tool-line .t-status.t-ok{color:var(--green)}
 .tool-line .t-status.t-fail{color:var(--red)}
+.tool-line.t-settled{opacity:0;transform:translateX(8px);transition:opacity .35s ease,transform .35s ease}
 /* Model reasoning: collapsible faded block */
 .thinking-block{align-self:flex-start;max-width:95%;font-family:var(--mono);font-size:11px;color:var(--text2);border-left:2px solid rgba(232,163,61,.4);padding:2px 0 2px 10px;opacity:.85;animation:fadeIn .2s ease}
 .thinking-block summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.08em;color:var(--text2);user-select:none}
@@ -231,8 +232,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <input id="file-path" placeholder="path/to/file (workspace root)" spellcheck="false">
 <button id="btn-open" title="Open file">Open</button>
 <button id="btn-save" title="Save (Ctrl+S)" disabled>Save</button>
-<button id="btn-download" title="Download this file">Download</button>
-<button id="btn-zip" title="Download all agent-touched files as zip">Zip</button>
+<button id="btn-zip" title="Download all workspace files as zip">Zip</button>
 </div>
 <div id="editor-main">
 <div id="explorer">
@@ -318,7 +318,6 @@ let currentApprovalId=null;
 const filePathInput=$('#file-path');
 const btnOpen=$('#btn-open');
 const btnSave=$('#btn-save');
-const btnDownload=$('#btn-download');
 const btnZip=$('#btn-zip');
 const fileStatus=$('#file-status');
 const fileToast=$('#file-toast');
@@ -449,40 +448,29 @@ async function saveFile(){
   showFileToast(`💾 Saved ${currentFilePath}`);
 }
 
-async function downloadFile(){
-  if(!currentFilePath)return;
-  if(dirty)await saveFile();
-  const blob=new Blob([editor.getValue()],{type:'text/plain'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=baseName(currentFilePath);
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
 async function downloadZip(){
   if(typeof JSZip==='undefined'){appendMsg('error','JSZip not loaded (offline?)');return;}
   const zip=new JSZip();
-  const names={};
-  const add=(p,content)=>{const n=baseName(p);if(names[n]){names[n]++;zip.file(n.replace(/(\.[^.]+)?$/,`-${names[n]}$1`),content);}else{names[n]=1;zip.file(n,content);}};
-  if(currentFilePath){
-    if(dirty)await saveFile();
-    add(currentFilePath,editor.getValue());
-  }
-  for(const p of touchedPaths){
-    if(p===currentFilePath)continue;
-    try{
-      const r=await fetch('/api/file?'+sessQ()+'path='+encodeURIComponent(p));
-      if(r.ok){const d=await r.json();add(d.path||p,d.content||'');}
-    }catch(e){}
-  }
+  try{
+    const r=await fetch('/api/files?'+sessQ());
+    if(!r.ok){showFileToast('❌ Failed to list workspace files');return;}
+    const d=await r.json();
+    const paths=(d.files||[]).map(f=>f.path).filter(Boolean);
+    if(!paths.length){showFileToast('🤷 No files in this workspace yet');return;}
+    for(const p of paths){
+      try{
+        const fr=await fetch('/api/file?'+sessQ()+'path='+encodeURIComponent(p));
+        if(fr.ok){const fd=await fr.json();zip.file(p,fd.content||'');}
+      }catch(e){}
+    }
+  }catch(e){showFileToast('❌ Failed to build zip');return;}
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download='clawrig-code-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
   a.click();
   URL.revokeObjectURL(a.href);
-  showFileToast('📦 Downloading zip');
+  showFileToast('📦 Downloading workspace zip');
 }
 
 function refreshTree(){
@@ -748,7 +736,7 @@ function connectSSE(){
       if(d.type==='tool_call'){
         const a=parseArgs(d.args);
         const where=(a&&a.path)?a.path:(d.path||'');
-        hideThinking();collapseReasoning();
+        hideThinking();finalizeReasonBox();
         addToolLine(d.run_id||currentRunId||'run',d.name,where);
       }
       if(d.type==='tool_result'){
@@ -756,9 +744,11 @@ function connectSSE(){
         const short=(d.result||'').replace(/\s+/g,' ').slice(0,80);
         settleToolLine(d.run_id||currentRunId||'run',d.ok!==false,short);
         if(d.name==='write_file'||d.name==='edit_file'||d.name==='delete_file'){
+          const a=parseArgs(d.args);
+          const tp=(a&&a.path)?a.path:(d.path||'');
           if(d.name==='delete_file'){
-            touchedPaths.delete(d.path);
-            if(d.path===currentFilePath){
+            touchedPaths.delete(tp);
+            if(tp&&tp===currentFilePath){
               currentFilePath=null;
               editor.setValue('');
               editor.setOption('mode',null);
@@ -767,12 +757,14 @@ function connectSSE(){
             }
             refreshTree();
           }else{
-            setTimeout(()=>agentFileChanged(d.path),250);
+            if(tp){setTimeout(()=>agentFileChanged(tp),250);}
+            else{setTimeout(refreshTree,250);}
           }
         }
       }
       if(d.type==='session.thinking'){
         // Reasoning tokens from the model -> collapsible faded block
+        hideThinking();
         const box=ensureReasonBox(d.run_id||currentRunId||'run');
         const body=box.querySelector('.thinking-body');
         body.textContent=(body.textContent+d.token).slice(-3000);
@@ -780,7 +772,7 @@ function connectSSE(){
       }
       if(d.type==='session.token'){
         // Stream tokens into a live assistant bubble for this run
-        hideThinking();collapseReasoning();
+        hideThinking();finalizeReasonBox();
         if(d.run_id&&d.run_id!==streamRunId){
           streamRunId=d.run_id;
           const div=document.createElement('div');
@@ -801,7 +793,7 @@ function connectSSE(){
       }
       if(d.type==='agent_response'&&d.agent===agent){
         hideTyping();
-        collapseReasoning();
+        finalizeReasonBox();
         hideCodeIndicator();codeInFlight=0;
         refreshTree();
         if(!streamBubble||streamBubble.id!=='stream-bubble'||d.run_id!==streamRunId){
@@ -889,12 +881,16 @@ function settleToolLine(runId,ok,short){
   if(!q||!q.length)return;
   const t=q.shift();
   if(isCodeTool(t.name)){codeInFlight=Math.max(0,codeInFlight-1);if(!codeInFlight)hideCodeIndicator();}
-  const st=t.el.querySelector('.t-status');
-  if(st){
-    st.textContent=ok?' ✓':' ✗'+(short?' '+short:'');
-    st.className='t-status '+(ok?'t-ok':'t-fail');
-  }
   for(const r of runTools){if(r.name===t.name&&r.path===t.path&&r.ok===null){r.ok=ok;break;}}
+  if(t.el&&t.el.isConnected){
+    const st=t.el.querySelector('.t-status');
+    if(st){
+      st.textContent=ok?' ✓':' ✗'+(short?' '+short:'');
+      st.className='t-status '+(ok?'t-ok':'t-fail');
+    }
+    t.el.classList.add('t-settled');
+    setTimeout(()=>{if(t.el&&t.el.isConnected)t.el.remove();},400);
+  }
 }
 
 function showThinking(){
@@ -934,13 +930,17 @@ function ensureReasonBox(runId){
   return reasonBox;
 }
 
-function collapseReasoning(){
-  if(reasonBox&&reasonBox.open)reasonBox.open=false;
+function finalizeReasonBox(){
+  if(!reasonBox||!reasonBox.isConnected)return;
+  const sum=reasonBox.querySelector('summary');
+  if(sum&&sum.querySelector('.spin-ring'))sum.innerHTML='💭 Reasoning';
+  reasonBox.open=false;
 }
 
 function resetRunIndicators(){
   hideThinking();hideCodeIndicator();codeInFlight=0;
   pendingToolEls={};
+  finalizeReasonBox();
 }
 
 function renderSummary(tools,note){
@@ -1040,7 +1040,6 @@ input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
 input.oninput=()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,120)+'px';};
 btnOpen.onclick=()=>openFile();
 btnSave.onclick=saveFile;
-btnDownload.onclick=downloadFile;
 btnZip.onclick=downloadZip;
 explorerRefresh.onclick=()=>{refreshTree();loadPackages();};
 $('#tab-files').onclick=()=>showExplorerTab('files');

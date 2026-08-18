@@ -364,14 +364,7 @@ impl AgentRuntime {
                     for tc in &tool_calls {
                         // Extract the path argument so the editor UI can act on
                         // file tools without re-parsing the raw argument JSON.
-                        let args_value: serde_json::Value =
-                            serde_json::from_str(tc.arguments.as_str().unwrap_or(""))
-                                .unwrap_or(serde_json::Value::Null);
-                        let tool_path = args_value
-                            .get("path")
-                            .and_then(|p| p.as_str())
-                            .unwrap_or("")
-                            .to_string();
+                        let tool_path = extract_tool_path(&tc.arguments);
 
                         // Broadcast tool call event to web UI
                         let _ = self.event_tx.send(serde_json::to_string(&serde_json::json!({
@@ -647,6 +640,46 @@ Use PowerShell syntax only if explicitly needed via `powershell -Command \"...\"
             .context("Failed to parse tool arguments as JSON")?;
 
         entry.handler.execute(ctx, input).await
+    }
+}
+
+/// Extract the `path` argument from a tool call's arguments so the editor UI
+/// can act on file tools without re-parsing raw JSON. The arguments value may
+/// arrive either as an already-parsed JSON object (llm.rs parses the model's
+/// arguments string) or as a JSON-encoded string.
+fn extract_tool_path(arguments: &serde_json::Value) -> String {
+    let args_value: serde_json::Value = match arguments.as_str() {
+        Some(s) => serde_json::from_str(s).unwrap_or(serde_json::Value::Null),
+        None => arguments.clone(),
+    };
+    args_value
+        .get("path")
+        .and_then(|p| p.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_tool_path;
+    use serde_json::json;
+
+    #[test]
+    fn tool_path_from_object_arguments() {
+        let args = json!({"content": "hello", "path": "a/b.txt"});
+        assert_eq!(extract_tool_path(&args), "a/b.txt");
+    }
+
+    #[test]
+    fn tool_path_from_string_arguments() {
+        let args = json!("{\"content\":\"hello\",\"path\":\"c.txt\"}");
+        assert_eq!(extract_tool_path(&args), "c.txt");
+    }
+
+    #[test]
+    fn tool_path_empty_when_missing() {
+        assert_eq!(extract_tool_path(&json!({"content": "hi"})), "");
+        assert_eq!(extract_tool_path(&json!(123)), "");
     }
 }
 
