@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#05070f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>ClawRig</title>
+<title>Glyph</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -90,11 +90,13 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 /* Task completion summary card */
 .summary-card{align-self:flex-start;max-width:95%;background:linear-gradient(135deg,rgba(126,198,153,.09),rgba(232,163,61,.05));border:1px solid rgba(126,198,153,.35);border-radius:var(--radius);padding:10px 14px;font-size:12.5px;color:var(--text);animation:fadeIn .25s ease}
 .summary-card .sum-title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;letter-spacing:.05em;color:var(--green);margin-bottom:6px}
-.summary-card .sum-tools{display:flex;flex-direction:column;gap:3px;font-family:var(--mono);font-size:11.5px;color:var(--text2)}
-.summary-card .sum-tools span{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.summary-card .sum-note{margin-top:6px;padding-top:8px;font-size:12.5px;line-height:1.55;color:var(--text);border-top:1px dashed rgba(255,255,255,.1);white-space:pre-wrap;word-break:break-word}
+.summary-card .sum-tools{margin-top:8px;font-family:var(--mono);font-size:11.5px;color:var(--text2)}
+.summary-card .sum-tools summary{cursor:pointer;user-select:none;opacity:.85;letter-spacing:.03em}
+.summary-card .sum-tools summary:hover{opacity:1}
+.summary-card .sum-tools .sum-row{display:flex;align-items:center;gap:6px;padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .summary-card .sum-ok{color:var(--green)}
 .summary-card .sum-fail{color:var(--red)}
-.summary-card .sum-note{margin-top:6px;font-size:11px;color:var(--text2);opacity:.8;font-family:var(--mono);word-break:break-word}
 #input-bar{background:var(--surface);padding:12px 16px;display:flex;gap:10px;border-top:1px solid var(--border);flex-shrink:0}
 #input{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:14px;outline:none;resize:none;max-height:120px;font-family:inherit;transition:border-color .15s,box-shadow .15s;caret-color:var(--accent)}
 #input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(232,163,61,.12)}
@@ -132,18 +134,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 .tree-row.dir{color:var(--text)}
 .tree-row.dir::after{content:'';margin-left:auto;flex-shrink:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--text2);transition:transform .15s}
 .tree-row.dir.open::after{transform:rotate(180deg)}
-.pkg-head{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:13px;font-family:var(--mono);font-weight:600;cursor:pointer;color:var(--accent);border-bottom:1px solid var(--border);background:rgba(34,211,238,.04)}
-.pkg-head:hover{background:var(--surface2)}
-.pkg-meta{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:11px;color:var(--text2);font-family:var(--mono);flex-wrap:wrap;border-bottom:1px solid rgba(34,211,238,.08)}
-.pkg-badge{background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700}
-.pkg-manifest{color:var(--accent);cursor:pointer;text-decoration:underline dotted}
-.pkg-manifest:hover{color:var(--green)}
-.pkg-label{padding:6px 10px 2px;font-size:10px;font-weight:700;letter-spacing:.12em;color:var(--text2);font-family:var(--mono)}
-.pkg-deps{display:flex;flex-direction:column;padding:0 6px 8px;border-bottom:1px solid var(--border)}
-.dep-row{padding:2px 8px;font-size:12px;font-family:var(--mono);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
-.dep-row:hover{color:var(--text)}
-.dep-row .dep-name{color:var(--text)}
-.dep-row .dep-kind{color:var(--text2);opacity:.7;margin-left:6px;font-size:10px}
+
 #explorer-list{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:1px;min-height:0}
 #explorer-empty{padding:10px;font-size:12px;color:var(--text2);line-height:1.5}
 .tree-row{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:6px;font-size:12.5px;font-family:var(--mono);cursor:pointer;white-space:nowrap;color:var(--text2)}
@@ -222,7 +213,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 </head>
 <body>
 <header>
-<h1><span class="logo">C</span>ClawRig<span class="sub">// agent workbench</span></h1>
+<h1><span class="logo">G</span>Glyph<span class="sub">// agent workbench</span></h1>
 <button id="new-session" title="Start a fresh session (new workspace, clean chat)">+ New session</button>
 <div class="status" id="status">Connected</div>
 </header>
@@ -238,7 +229,6 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <div id="explorer">
 <div id="explorer-tabs">
 <button class="explorer-tab active" id="tab-files" title="Workspace files">FILES</button>
-<button class="explorer-tab" id="tab-packages" title="Project &amp; packages">PACKAGES</button>
 <button id="explorer-refresh" title="Refresh">↻</button>
 </div>
 <div id="explorer-list"></div>
@@ -252,7 +242,7 @@ header .status::before{content:'';width:8px;height:8px;border-radius:50%;backgro
 <div id="chat-col">
 <div id="messages"></div>
 <div id="input-bar">
-<textarea id="input" rows="1" placeholder="Message ClawRig..." autofocus></textarea>
+<textarea id="input" rows="1" placeholder="Message Glyph..." autofocus></textarea>
 <button id="cancel" style="display:none;background:var(--red);color:#fff;border:none;border-radius:var(--radius);padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer">Cancel</button>
 <button id="send">Send</button>
 </div>
@@ -329,7 +319,6 @@ let touchedPaths=new Set();
 let treeFiles=[];
 let treeData=[];
 let expandedPaths=new Set();
-let packageData=[];
 let explorerTab='files';
 let treeTimer=null;
 let toastTimer=null;
@@ -467,7 +456,7 @@ async function downloadZip(){
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='clawrig-code-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
+  a.download='glyph-code-'+new Date().toISOString().replace(/[:.]/g,'-')+'.zip';
   a.click();
   URL.revokeObjectURL(a.href);
   showFileToast('📦 Downloading workspace zip');
@@ -547,14 +536,17 @@ function dirRow(node){
 }
 
 function buildNode(parent,node,depth){
+  const indent=(8+depth*14)+'px';
   if(node.type==='dir'){
-    parent.appendChild(dirRow(node));
+    const row=dirRow(node);
+    row.style.paddingLeft=indent;
+    parent.appendChild(row);
     if(expandedPaths.has(node.path)){
       for(const child of (node.children||[]))buildNode(parent,child,depth+1);
     }
   }else{
     const row=fileRow(node);
-    row.style.paddingLeft=(8+depth*14)+'px';
+    row.style.paddingLeft=indent;
     parent.appendChild(row);
   }
 }
@@ -574,86 +566,10 @@ function renderTree(){
   explorerList.appendChild(frag);
 }
 
-function renderPackages(){
-  if(explorerTab!=='packages')return;
-  explorerList.innerHTML='';
-  if(packageData.length===0){
-    const empty=document.createElement('div');
-    empty.id='explorer-empty';
-    empty.textContent='No package manifests detected.';
-    explorerList.appendChild(empty);
-    return;
-  }
-  for(const p of packageData){
-    const head=document.createElement('div');
-    head.className='pkg-head';
-    head.title='Open '+p.manifest;
-    head.textContent=(p.icon||'📦')+' '+p.name;
-    const manifestPath=(p.dir?p.dir+'/':'')+p.manifest;
-    head.onclick=()=>openFile(manifestPath);
-
-    const meta=document.createElement('div');
-    meta.className='pkg-meta';
-    const badge=document.createElement('span');
-    badge.className='pkg-badge';
-    badge.textContent=p.type_label||p.type;
-    meta.appendChild(badge);
-    if(p.version){const v=document.createElement('span');v.textContent='v'+p.version;meta.appendChild(v);}
-    if(p.dir){const d=document.createElement('span');d.textContent='↳ '+p.dir;meta.appendChild(d);}
-    const mf=document.createElement('span');
-    mf.className='pkg-manifest';
-    mf.textContent='📄 '+p.manifest;
-    mf.onclick=(e)=>{e.stopPropagation();openFile(manifestPath);};
-    meta.appendChild(mf);
-
-    const label=document.createElement('div');
-    label.className='pkg-label';
-    label.textContent='DEPENDENCIES'+(p.dependencies?` (${p.dependencies.length})`:'');
-    const deps=document.createElement('div');
-    deps.className='pkg-deps';
-    if(!p.dependencies||p.dependencies.length===0){
-      deps.textContent='No dependencies';
-      deps.style.padding='2px 10px 8px';
-      deps.style.color='var(--text2)';
-      deps.style.fontSize='12px';
-    }else{
-      for(const dep of p.dependencies){
-        const row=document.createElement('div');
-        row.className='dep-row';
-        const n=document.createElement('span');
-        n.className='dep-name';
-        n.textContent=dep.name;
-        row.appendChild(n);
-        if(dep.version){const v=document.createElement('span');v.className='dep-kind';v.textContent=dep.version;row.appendChild(v);}
-        if(dep.kind&&dep.kind!=='deps'&&dep.kind!=='dependencies'){const k=document.createElement('span');k.className='dep-kind';k.textContent='· '+dep.kind;row.appendChild(k);}
-        row.title=dep.name+(dep.version?'@'+dep.version:'');
-        deps.appendChild(row);
-      }
-    }
-
-    explorerList.appendChild(head);
-    explorerList.appendChild(meta);
-    explorerList.appendChild(label);
-    explorerList.appendChild(deps);
-  }
-}
-
-async function loadPackages(){
-  try{
-    const r=await fetch('/api/project?'+sessQ());
-    if(!r.ok)return;
-    const d=await r.json();
-    packageData=d.projects||[];
-    if(explorerTab==='packages')renderPackages();
-  }catch(e){}
-}
-
 function showExplorerTab(tab){
   explorerTab=tab;
   $('#tab-files').classList.toggle('active',tab==='files');
-  $('#tab-packages').classList.toggle('active',tab==='packages');
-  if(tab==='packages')renderPackages();
-  else renderTree();
+  renderTree();
 }
 
 function pulseFile(path){
@@ -689,7 +605,6 @@ async function init(){
   connectSSE();
   updateSessionChip();
   refreshTree();
-  loadPackages();
   updateMetrics();
   setInterval(updateMetrics,30000);
 }
@@ -804,7 +719,7 @@ function connectSSE(){
           if(d.content)streamBubble.textContent=d.content;
           streamBubble=null;streamRunId=null;
         }
-        if(runTools.length)renderSummary(runTools,(d.content||'').slice(0,300));
+        if(runTools.length)renderSummary(runTools,d.content||'');
         runTools=[];pendingToolEls={};
         if(d.run_id===currentRunId)finishRun();
       }
@@ -950,16 +865,18 @@ function renderSummary(tools,note){
   const okCount=tools.filter(t=>t.ok).length;
   const allOk=okCount===tools.length;
   const title=allOk
-    ?`✅ Task complete — ${tools.length} step${tools.length===1?'':'s'}`
+    ?`✅ Task complete`
     :`⚠️ Task finished with issues — ${okCount}/${tools.length} ok`;
   let rows='';
   for(const t of tools){
-    const label=esc(t.name)+(t.path?` ${esc(t.path)}`:'');
-    rows+=`<span class="${t.ok?'sum-ok':'sum-fail'}">${t.ok?'✔':'✘'} ${toolIcon(t.name)} ${label}</span>`;
+    const label=esc(t.name)+(t.path?` <span class="sum-path">${esc(t.path)}</span>`:'');
+    rows+=`<div class="sum-row ${t.ok?'sum-ok':'sum-fail'}">${t.ok?'✔':'✘'} ${toolIcon(t.name)} ${label}</div>`;
   }
   const card=document.createElement('div');
   card.className='summary-card';
-  card.innerHTML=`<div class="sum-title">${title}</div><div class="sum-tools">${rows}</div>${note?`<div class="sum-note">${esc(note)}</div>`:''}`;
+  card.innerHTML=`<div class="sum-title">${title}</div>`+
+    (note?`<div class="sum-note">${esc(note)}</div>`:'')+
+    `<details class="sum-tools"><summary>${tools.length} tool action${tools.length===1?'':'s'} — expand</summary>${rows}</details>`;
   messages.appendChild(card);
   messages.scrollTop=messages.scrollHeight;
 }
@@ -1041,9 +958,8 @@ input.oninput=()=>{input.style.height='auto';input.style.height=Math.min(input.s
 btnOpen.onclick=()=>openFile();
 btnSave.onclick=saveFile;
 btnZip.onclick=downloadZip;
-explorerRefresh.onclick=()=>{refreshTree();loadPackages();};
+explorerRefresh.onclick=()=>refreshTree();
 $('#tab-files').onclick=()=>showExplorerTab('files');
-$('#tab-packages').onclick=()=>showExplorerTab('packages');
 filePathInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();openFile();}};
 document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){

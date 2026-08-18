@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: clawrig
+    name: glyph
     runtime: docker
     repo: https://github.com/SiddharthMishra28/catalyst-agent
     branch: feature/codemirror-editor

@@ -803,5 +803,5 @@ pub fn session_workspace_dir(session_id: &str) -> std::path::PathBuf {
             }
         })
         .collect();
-    std::env::temp_dir().join("clawrig-sessions").join(safe)
+    std::env::temp_dir().join("glyph-sessions").join(safe)
 }

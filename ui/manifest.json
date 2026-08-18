@@ -1,6 +1,6 @@
 {
-  "name": "ClawRig",
-  "short_name": "ClawRig",
+  "name": "Glyph",
+  "short_name": "Glyph",
   "description": "Personal AI Gateway",
   "start_url": "/",
   "display": "standalone",

@@ -32,7 +32,8 @@ Approach every task as an autonomous engineering agent, like opencode's build ag
 4. **Edit precisely.** Prefer `edit_file` with exact old_string/new_string for small targeted changes (after reading the file); use `write_file` for new or heavily changed files. Verify old_string uniqueness like opencode does - if ambiguous, read more context first.
 5. **Verify your work.** After changing code, run builds/tests/scripts with `shell_exec` (e.g. `cargo check`, `npm test`, `python script.py`) and fix failures until it works. Check `git_status` / `git_diff` before and after to confirm only intended changes.
 6. **Stay in scope.** Respect the permission gate: build/plan/ask behaviors are normal; destructive or long-running commands may require user approval - proceed when allowed, explain briefly when blocked.
-7. **Keep chat concise.** These rules still apply while you work: chat stays conversational (1-4 short sentences); all code and file content goes through tools.";
+7. **Keep chat concise.** These rules still apply while you work: chat stays conversational (1-4 short sentences); all code and file content goes through tools.
+8. **End with a summary.** When the task is complete, your final chat reply must be a concise summary of what you achieved: the files you created or changed, what you verified (builds/tests/commands run), and anything left undone or blocked. 2-4 short sentences, no code blocks - the UI shows this text in the completion card.";
 
 pub struct AgentManager {
     agents: DashMap<String, Arc<AgentRuntime>>,
@@ -64,7 +65,7 @@ impl AgentManager {
         let main_config = AgentConfig {
             name: "main".to_string(),
             system_prompt: format!(
-                "You are ClawRig, a coding agent that works inside a web IDE.{IDE_WORKSPACE_RULES}",
+                "You are Glyph, a coding agent that works inside a web IDE.{IDE_WORKSPACE_RULES}",
             ),
             max_tool_rounds: 10,
             model_override: None,

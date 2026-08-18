@@ -34,7 +34,7 @@ pub struct DatabaseConfig {
     pub path: String,
 }
 
-fn default_db_path() -> String { "~/.clawrig/clawrig.db".to_string() }
+fn default_db_path() -> String { "~/.glyph/glyph.db".to_string() }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AgentsConfig {
